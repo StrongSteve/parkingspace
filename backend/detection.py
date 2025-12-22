@@ -46,17 +46,33 @@ def _download_tflite_model():
     import os
 
     model_dir = os.path.dirname(os.path.abspath(__file__))
-    model_path = os.path.join(model_dir, 'efficientdet_lite0.tflite')
+    model_path = os.path.join(model_dir, 'ssd_mobilenet_v1.tflite')
 
     if os.path.exists(model_path):
         return model_path
 
-    # Download EfficientDet-Lite0 model (~4MB, good accuracy, low memory)
-    model_url = "https://storage.googleapis.com/tfhub-lite-models/tensorflow/lite-model/efficientdet/lite0/detection/metadata/1.tflite"
+    # Use SSD MobileNet V1 quantized - smallest model (~4MB, ~20-30MB RAM)
+    # Much smaller than EfficientDet-Lite0 which uses ~100MB+ RAM
+    model_url = "https://storage.googleapis.com/download.tensorflow.org/models/tflite/coco_ssd_mobilenet_v1_1.0_quant_2018_06_29.zip"
 
-    logger.info(f"Downloading TFLite model from {model_url}...")
+    logger.info(f"Downloading TFLite model...")
     try:
-        urllib.request.urlretrieve(model_url, model_path)
+        import zipfile
+        import tempfile
+
+        # Download zip file
+        zip_path = os.path.join(tempfile.gettempdir(), 'model.zip')
+        urllib.request.urlretrieve(model_url, zip_path)
+
+        # Extract the tflite file
+        with zipfile.ZipFile(zip_path, 'r') as zip_ref:
+            for name in zip_ref.namelist():
+                if name.endswith('.tflite'):
+                    with zip_ref.open(name) as src, open(model_path, 'wb') as dst:
+                        dst.write(src.read())
+                    break
+
+        os.remove(zip_path)
         logger.info(f"TFLite model downloaded to {model_path}")
         return model_path
     except Exception as e:
@@ -673,13 +689,27 @@ def detect_vehicles_tf(image: np.ndarray, polygon: List[List[float]], debug_info
         interpreter.set_tensor(input_details[0]['index'], input_data)
         interpreter.invoke()
 
-        # Get results - EfficientDet-Lite outputs
-        # Output order: boxes, classes, scores, num_detections
-        boxes = interpreter.get_tensor(output_details[0]['index'])[0]  # [ymin, xmin, ymax, xmax]
-        classes = interpreter.get_tensor(output_details[1]['index'])[0].astype(int)
-        scores = interpreter.get_tensor(output_details[2]['index'])[0]
+        # Get results - SSD MobileNet outputs (different order than EfficientDet)
+        # The output tensor order varies by model, detect by shape
+        outputs = {}
+        for detail in output_details:
+            tensor = interpreter.get_tensor(detail['index'])
+            shape = tensor.shape
+            if len(shape) == 3 and shape[2] == 4:  # boxes: [1, N, 4]
+                outputs['boxes'] = tensor[0]
+            elif len(shape) == 2 and tensor.dtype in [np.float32, np.uint8]:  # classes or scores: [1, N]
+                if 'classes' not in outputs:
+                    outputs['classes'] = tensor[0]
+                else:
+                    outputs['scores'] = tensor[0]
+            elif len(shape) == 1:  # num_detections: [1]
+                outputs['num'] = int(tensor[0])
 
-        # COCO classes for vehicles (EfficientDet uses 1-indexed COCO)
+        boxes = outputs.get('boxes', np.array([]))
+        classes = outputs.get('classes', np.array([])).astype(int)
+        scores = outputs.get('scores', np.array([]))
+
+        # COCO classes for vehicles (1-indexed in COCO)
         vehicle_classes = {3: 'car', 4: 'motorcycle', 6: 'bus', 8: 'truck'}
 
         best_score = 0.0
@@ -974,10 +1004,22 @@ def detect_all_spaces(
             interpreter.set_tensor(input_details[0]['index'], input_data)
             interpreter.invoke()
 
-            # Get results
-            boxes = interpreter.get_tensor(output_details[0]['index'])[0]
-            classes = interpreter.get_tensor(output_details[1]['index'])[0].astype(int)
-            scores = interpreter.get_tensor(output_details[2]['index'])[0]
+            # Get results - detect by shape (model output order varies)
+            outputs = {}
+            for detail in output_details:
+                tensor = interpreter.get_tensor(detail['index'])
+                shape = tensor.shape
+                if len(shape) == 3 and shape[2] == 4:
+                    outputs['boxes'] = tensor[0]
+                elif len(shape) == 2 and tensor.dtype in [np.float32, np.uint8]:
+                    if 'classes' not in outputs:
+                        outputs['classes'] = tensor[0]
+                    else:
+                        outputs['scores'] = tensor[0]
+
+            boxes = outputs.get('boxes', np.array([]))
+            classes = outputs.get('classes', np.array([])).astype(int)
+            scores = outputs.get('scores', np.array([]))
 
             vehicle_classes = {3: 'car', 4: 'motorcycle', 6: 'bus', 8: 'truck'}
 
