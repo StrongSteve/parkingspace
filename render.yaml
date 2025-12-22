@@ -15,4 +15,4 @@ services:
       - key: TF_ENABLED
         value: "true"
       - key: TF_PRELOAD
-        value: "false"  # Don't preload on startup to save memory
+        value: "true"

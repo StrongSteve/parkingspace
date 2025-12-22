@@ -33,7 +33,7 @@ logger = logging.getLogger(__name__)
 PIXEL_THRESHOLD = float(os.getenv('PIXEL_THRESHOLD', '0.15'))
 TF_CONFIDENCE = float(os.getenv('TF_CONFIDENCE', '0.5'))
 TF_ENABLED = os.getenv('TF_ENABLED', 'true').lower() in ('true', '1', 'yes')
-TF_PRELOAD = os.getenv('TF_PRELOAD', 'false').lower() in ('true', '1', 'yes')
+TF_PRELOAD = os.getenv('TF_PRELOAD', 'true').lower() in ('true', '1', 'yes')
 MAX_RECENT_IMAGES = 5
 CALIBRATION_FILE = Path(__file__).parent / 'calibration.json'
 
