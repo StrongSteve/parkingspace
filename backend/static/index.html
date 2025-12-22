@@ -1,0 +1,345 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="theme-color" content="#0f172a">
+  <title>Parking Status</title>
+  <link rel="stylesheet" href="/static/css/style.css">
+</head>
+<body>
+  <div class="container">
+    <div class="header">
+      <h1>Parking Status</h1>
+      <p>Live parking availability</p>
+    </div>
+
+    <!-- Loading State -->
+    <div class="loading" id="loading">
+      <div class="spinner"></div>
+      <span>Loading...</span>
+    </div>
+
+    <!-- No Spaces Configured -->
+    <div class="card hidden" id="noSpaces">
+      <div class="alert alert-info">
+        No parking spaces configured yet. The administrator needs to complete calibration.
+      </div>
+    </div>
+
+    <!-- Status Display -->
+    <div class="hidden" id="statusDisplay">
+      <!-- Summary -->
+      <div class="summary">
+        <div class="summary-stat">
+          <div class="summary-number free" id="freeCount">0</div>
+          <div class="summary-label">Free</div>
+        </div>
+        <div class="summary-stat">
+          <div class="summary-number occupied" id="occupiedCount">0</div>
+          <div class="summary-label">Occupied</div>
+        </div>
+      </div>
+
+      <!-- Parking Sketch -->
+      <div class="card">
+        <div class="parking-sketch" id="parkingSketch">
+          <svg id="sketchSvg" viewBox="0 0 100 56.25" preserveAspectRatio="xMidYMid meet">
+            <!-- Spaces will be rendered here -->
+          </svg>
+        </div>
+      </div>
+
+      <!-- Space List -->
+      <div class="card">
+        <div class="card-header">
+          <span class="card-title">Spaces</span>
+        </div>
+        <div class="space-list" id="spaceList">
+          <!-- Populated dynamically -->
+        </div>
+      </div>
+
+      <!-- Last Update & Refresh -->
+      <div class="last-update">
+        <span id="lastUpdate">Never updated</span>
+        <br>
+        <span id="lastTimestamp" style="font-size: 0.75rem; color: var(--color-text-muted);"></span>
+        <br>
+        <button class="btn btn-secondary" id="refreshBtn" style="margin-top: 0.5rem;">
+          Refresh
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    const elements = {
+      loading: document.getElementById('loading'),
+      noSpaces: document.getElementById('noSpaces'),
+      statusDisplay: document.getElementById('statusDisplay'),
+      freeCount: document.getElementById('freeCount'),
+      occupiedCount: document.getElementById('occupiedCount'),
+      sketchSvg: document.getElementById('sketchSvg'),
+      spaceList: document.getElementById('spaceList'),
+      lastUpdate: document.getElementById('lastUpdate'),
+      lastTimestamp: document.getElementById('lastTimestamp'),
+      refreshBtn: document.getElementById('refreshBtn')
+    };
+
+    async function fetchStatus() {
+      try {
+        const response = await fetch('/api/status');
+        const data = await response.json();
+        return data;
+      } catch (error) {
+        console.error('Failed to fetch status:', error);
+        return null;
+      }
+    }
+
+    function renderSketch(spaces, vehicleBoxes, semanticFeatures) {
+      const svg = elements.sketchSvg;
+      svg.innerHTML = '';
+
+      // Background
+      const bg = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
+      bg.setAttribute('width', '100');
+      bg.setAttribute('height', '56.25');
+      bg.setAttribute('fill', '#1a1a2e');
+      svg.appendChild(bg);
+
+      // Draw semantic features (roads, grass, buildings, water)
+      if (semanticFeatures) {
+        // Draw grass areas first (background)
+        if (semanticFeatures.grass) {
+          semanticFeatures.grass.forEach(region => {
+            const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+            path.setAttribute('d', scalePathToSvg(region.path));
+            path.setAttribute('fill', '#2d5a3d');
+            path.setAttribute('fill-opacity', '0.8');
+            svg.appendChild(path);
+          });
+        }
+
+        // Draw water/rivers
+        if (semanticFeatures.water) {
+          semanticFeatures.water.forEach(region => {
+            const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+            path.setAttribute('d', scalePathToSvg(region.path));
+            path.setAttribute('fill', '#1e4d6b');
+            path.setAttribute('fill-opacity', '0.9');
+            svg.appendChild(path);
+          });
+        }
+
+        // Draw roads/pavement
+        if (semanticFeatures.roads) {
+          semanticFeatures.roads.forEach(region => {
+            const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+            path.setAttribute('d', scalePathToSvg(region.path));
+            path.setAttribute('fill', '#4a4a5a');
+            path.setAttribute('fill-opacity', '0.9');
+            svg.appendChild(path);
+          });
+        }
+
+        // Draw buildings (gray)
+        if (semanticFeatures.buildings) {
+          semanticFeatures.buildings.forEach(region => {
+            const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+            path.setAttribute('d', scalePathToSvg(region.path));
+            path.setAttribute('fill', '#5a5a5a');
+            path.setAttribute('fill-opacity', '0.9');
+            path.setAttribute('stroke', '#6a6a6a');
+            path.setAttribute('stroke-width', '0.3');
+            svg.appendChild(path);
+          });
+        }
+
+        // Draw road markings (white/yellow lines)
+        if (semanticFeatures.markings) {
+          semanticFeatures.markings.forEach(region => {
+            const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+            path.setAttribute('d', scalePathToSvg(region.path));
+            path.setAttribute('fill', '#ffffff');
+            path.setAttribute('fill-opacity', '0.9');
+            path.setAttribute('stroke', '#eeeeee');
+            path.setAttribute('stroke-width', '0.2');
+            svg.appendChild(path);
+          });
+        }
+      }
+
+      // Draw vehicle boxes
+      if (vehicleBoxes && vehicleBoxes.length > 0) {
+        vehicleBoxes.forEach(vbox => {
+          if (!vbox.box) return;
+
+          const [y1, x1, y2, x2] = vbox.box; // normalized coords
+          const rect = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
+          rect.setAttribute('x', x1 * 100);
+          rect.setAttribute('y', y1 * 56.25);
+          rect.setAttribute('width', (x2 - x1) * 100);
+          rect.setAttribute('height', (y2 - y1) * 56.25);
+          rect.setAttribute('fill', '#ef4444');
+          rect.setAttribute('fill-opacity', '0.5');
+          rect.setAttribute('stroke', '#ef4444');
+          rect.setAttribute('stroke-width', '0.3');
+          rect.setAttribute('rx', '0.5');
+          svg.appendChild(rect);
+
+          // Add vehicle type label
+          if (vbox.type) {
+            const label = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+            label.setAttribute('x', (x1 + (x2 - x1) / 2) * 100);
+            label.setAttribute('y', y1 * 56.25 - 0.5);
+            label.setAttribute('text-anchor', 'middle');
+            label.setAttribute('fill', '#ffaaaa');
+            label.setAttribute('font-size', '2');
+            label.textContent = vbox.type;
+            svg.appendChild(label);
+          }
+        });
+      }
+
+      if (!spaces || spaces.length === 0) return;
+
+      spaces.forEach(space => {
+        if (!space.polygon || space.polygon.length < 3) return;
+
+        // Create polygon
+        const points = space.polygon
+          .map(p => `${p[0] * 100},${p[1] * 56.25}`)
+          .join(' ');
+
+        const polygon = document.createElementNS('http://www.w3.org/2000/svg', 'polygon');
+        polygon.setAttribute('points', points);
+
+        // Color based on status
+        const fillColor = space.status === 'free' ? '#22c55e' :
+                          space.status === 'occupied' ? '#ef4444' : '#6b7280';
+        polygon.setAttribute('fill', fillColor);
+        polygon.setAttribute('fill-opacity', '0.3');
+        polygon.setAttribute('stroke', fillColor);
+        polygon.setAttribute('stroke-width', '0.5');
+
+        svg.appendChild(polygon);
+
+        // Add label
+        const centerX = space.polygon.reduce((sum, p) => sum + p[0], 0) / space.polygon.length * 100;
+        const centerY = space.polygon.reduce((sum, p) => sum + p[1], 0) / space.polygon.length * 56.25;
+
+        const text = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+        text.setAttribute('x', centerX);
+        text.setAttribute('y', centerY);
+        text.setAttribute('text-anchor', 'middle');
+        text.setAttribute('dominant-baseline', 'middle');
+        text.setAttribute('fill', 'white');
+        text.setAttribute('font-size', '4');
+        text.setAttribute('font-weight', 'bold');
+        text.textContent = space.id;
+        svg.appendChild(text);
+      });
+    }
+
+    function scalePathToSvg(pathData) {
+      // Scale normalized path coordinates to SVG viewBox (100 x 56.25)
+      if (!pathData) return '';
+      return pathData.replace(/([0-9.]+),([0-9.]+)/g, (match, x, y) => {
+        return `${parseFloat(x) * 100},${parseFloat(y) * 56.25}`;
+      });
+    }
+
+    function renderSpaceList(spaces) {
+      const list = elements.spaceList;
+      list.innerHTML = '';
+
+      if (!spaces || spaces.length === 0) {
+        list.innerHTML = '<p class="text-muted">No spaces configured</p>';
+        return;
+      }
+
+      spaces.forEach(space => {
+        const item = document.createElement('div');
+        item.className = 'space-item';
+
+        const statusClass = space.status === 'free' ? 'free' :
+                           space.status === 'occupied' ? 'occupied' : 'unknown';
+
+        item.innerHTML = `
+          <span class="space-name">Space ${space.id}</span>
+          <span class="status-badge ${statusClass}">${space.status || 'unknown'}</span>
+        `;
+
+        list.appendChild(item);
+      });
+    }
+
+    function formatTimeAgo(isoString) {
+      if (!isoString) return 'Never updated';
+
+      const date = new Date(isoString);
+      const now = new Date();
+      const seconds = Math.floor((now - date) / 1000);
+
+      if (seconds < 60) return 'Just now';
+      if (seconds < 3600) return `${Math.floor(seconds / 60)} min ago`;
+      if (seconds < 86400) return `${Math.floor(seconds / 3600)} hours ago`;
+      return date.toLocaleString();
+    }
+
+    function formatTimestamp(isoString) {
+      if (!isoString) return '';
+      const date = new Date(isoString);
+      return date.toLocaleString();
+    }
+
+    async function updateDisplay() {
+      const data = await fetchStatus();
+
+      elements.loading.classList.add('hidden');
+
+      if (!data || !data.spaces || data.spaces.length === 0) {
+        elements.noSpaces.classList.remove('hidden');
+        elements.statusDisplay.classList.add('hidden');
+        return;
+      }
+
+      elements.noSpaces.classList.add('hidden');
+      elements.statusDisplay.classList.remove('hidden');
+
+      // Count statuses
+      const freeCount = data.spaces.filter(s => s.status === 'free').length;
+      const occupiedCount = data.spaces.filter(s => s.status === 'occupied').length;
+
+      elements.freeCount.textContent = freeCount;
+      elements.occupiedCount.textContent = occupiedCount;
+
+      // Render sketch with vehicle boxes and semantic features
+      renderSketch(data.spaces, data.vehicle_boxes, data.semantic_features);
+
+      // Render list
+      renderSpaceList(data.spaces);
+
+      // Update timestamp
+      elements.lastUpdate.textContent = formatTimeAgo(data.last_update);
+      elements.lastTimestamp.textContent = data.last_update ? `Image taken: ${formatTimestamp(data.last_update)}` : '';
+    }
+
+    // Event listeners
+    elements.refreshBtn.addEventListener('click', () => {
+      elements.refreshBtn.disabled = true;
+      elements.refreshBtn.textContent = 'Refreshing...';
+
+      updateDisplay().finally(() => {
+        elements.refreshBtn.disabled = false;
+        elements.refreshBtn.textContent = 'Refresh';
+      });
+    });
+
+    // Initial load
+    updateDisplay();
+  </script>
+</body>
+</html>

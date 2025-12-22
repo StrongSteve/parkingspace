@@ -1,0 +1,1443 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="theme-color" content="#0f172a">
+  <title>Parking Monitor - Admin</title>
+  <link rel="stylesheet" href="/static/css/style.css">
+  <style>
+    .admin-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 1rem;
+      background: var(--color-surface);
+      border-bottom: 1px solid var(--color-border);
+    }
+
+    .admin-header h1 {
+      font-size: 1.25rem;
+    }
+
+    .capture-status {
+      padding: 0.5rem 1rem;
+      border-radius: var(--radius);
+      font-size: 0.875rem;
+    }
+
+    .capture-status.running {
+      background: rgba(34, 197, 94, 0.2);
+      color: var(--color-free);
+    }
+
+    .capture-status.stopped {
+      background: rgba(239, 68, 68, 0.2);
+      color: var(--color-occupied);
+    }
+
+    .calibration-instructions {
+      background: var(--color-surface-light);
+      padding: 1rem;
+      border-radius: var(--radius);
+      margin-bottom: 1rem;
+      font-size: 0.875rem;
+    }
+
+    .calibration-instructions ol {
+      margin-left: 1.25rem;
+      margin-top: 0.5rem;
+    }
+
+    .space-controls {
+      display: flex;
+      gap: 0.5rem;
+      margin-bottom: 1rem;
+      flex-wrap: wrap;
+    }
+
+    .space-counter {
+      background: var(--color-primary);
+      color: white;
+      padding: 0.25rem 0.75rem;
+      border-radius: 9999px;
+      font-size: 0.875rem;
+      font-weight: 500;
+    }
+
+    .image-timestamp {
+      font-size: 0.75rem;
+      color: var(--color-text-muted);
+      text-align: center;
+      margin-top: 0.25rem;
+    }
+
+    .source-toggle {
+      display: flex;
+      gap: 0.5rem;
+      margin-bottom: 1rem;
+    }
+
+    .source-toggle .btn {
+      flex: 1;
+    }
+
+    .source-toggle .btn.active {
+      background: var(--color-primary);
+      color: white;
+    }
+
+    .upload-zone {
+      border: 2px dashed var(--color-border);
+      border-radius: var(--radius);
+      padding: 2rem;
+      text-align: center;
+      cursor: pointer;
+      transition: border-color 0.2s;
+    }
+
+    .upload-zone:hover {
+      border-color: var(--color-primary);
+    }
+
+    .upload-zone.dragover {
+      border-color: var(--color-primary);
+      background: rgba(59, 130, 246, 0.1);
+    }
+
+    .uploaded-preview {
+      width: 100%;
+      aspect-ratio: 16 / 9;
+      object-fit: contain;
+      background: #000;
+      border-radius: var(--radius);
+    }
+
+    .debug-section {
+      margin-top: 1rem;
+      border: 1px solid var(--color-border);
+      border-radius: var(--radius);
+      overflow: hidden;
+    }
+
+    .debug-header {
+      background: var(--color-surface-light);
+      padding: 0.75rem 1rem;
+      cursor: pointer;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      font-weight: 500;
+    }
+
+    .debug-header:hover {
+      background: var(--color-surface);
+    }
+
+    .debug-content {
+      padding: 1rem;
+      background: #1a1a2e;
+      font-family: monospace;
+      font-size: 0.75rem;
+      max-height: 500px;
+      overflow-y: auto;
+    }
+
+    .debug-space {
+      margin-bottom: 1rem;
+      padding: 0.75rem;
+      background: var(--color-surface);
+      border-radius: var(--radius);
+      border-left: 3px solid var(--color-primary);
+    }
+
+    .debug-space.occupied {
+      border-left-color: var(--color-occupied);
+    }
+
+    .debug-space.free {
+      border-left-color: var(--color-free);
+    }
+
+    .debug-space-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 0.5rem;
+      font-weight: 600;
+    }
+
+    .debug-row {
+      display: flex;
+      margin-bottom: 0.25rem;
+      line-height: 1.4;
+    }
+
+    .debug-label {
+      color: var(--color-text-muted);
+      min-width: 180px;
+      flex-shrink: 0;
+    }
+
+    .debug-value {
+      color: #e2e8f0;
+      word-break: break-all;
+    }
+
+    .debug-value.highlight {
+      color: #fbbf24;
+      font-weight: 600;
+    }
+
+    .debug-value.success {
+      color: var(--color-free);
+    }
+
+    .debug-value.error {
+      color: var(--color-occupied);
+    }
+
+    .debug-subsection {
+      margin-top: 0.5rem;
+      padding-top: 0.5rem;
+      border-top: 1px dashed var(--color-border);
+    }
+
+    .debug-subsection-title {
+      color: var(--color-primary);
+      font-weight: 600;
+      margin-bottom: 0.25rem;
+    }
+
+    .debug-json {
+      background: #0d1117;
+      padding: 0.5rem;
+      border-radius: 4px;
+      overflow-x: auto;
+      white-space: pre-wrap;
+      color: #7dd3fc;
+      font-size: 0.7rem;
+    }
+  </style>
+</head>
+<body>
+  <!-- Login Screen -->
+  <div class="login-container" id="loginScreen">
+    <div class="card login-card">
+      <div class="login-header">
+        <div class="login-icon">P</div>
+        <h2>Admin Access</h2>
+        <p class="text-muted">Enter admin password from server logs</p>
+      </div>
+
+      <form id="loginForm">
+        <div class="form-group">
+          <label class="form-label">Password</label>
+          <input type="password" id="passwordInput" class="form-input" placeholder="64-character password" required>
+        </div>
+
+        <div class="alert alert-error hidden" id="loginError"></div>
+
+        <button type="submit" class="btn btn-primary btn-block" id="loginBtn">
+          Sign In
+        </button>
+      </form>
+    </div>
+  </div>
+
+  <!-- Admin Dashboard -->
+  <div class="hidden" id="adminDashboard">
+    <div class="admin-header">
+      <h1>Parking Monitor Admin</h1>
+      <div>
+        <span class="capture-status stopped" id="captureStatus">Stopped</span>
+        <button class="btn btn-secondary" id="logoutBtn" style="margin-left: 0.5rem;">Logout</button>
+      </div>
+    </div>
+
+    <div class="container">
+      <!-- Tabs -->
+      <div class="tabs">
+        <button class="tab active" data-tab="calibration">Calibration</button>
+        <button class="tab" data-tab="monitor">Monitor</button>
+        <button class="tab" data-tab="images">Recent Images</button>
+      </div>
+
+      <!-- Calibration Tab -->
+      <div class="tab-content" id="tab-calibration">
+        <div class="calibration-instructions">
+          <strong>How to calibrate:</strong>
+          <ol>
+            <li>Allow camera access when prompted</li>
+            <li>Point camera at parking area</li>
+            <li>Click "Add Space" then click 4 corners for each space</li>
+            <li>Click "Capture Reference" for each space (when empty)</li>
+            <li>Click "Save Calibration" when done</li>
+          </ol>
+        </div>
+
+        <div class="card">
+          <!-- Source Toggle -->
+          <div class="source-toggle">
+            <button class="btn active" id="sourceCameraBtn">Camera</button>
+            <button class="btn" id="sourceUploadBtn">Upload Image</button>
+          </div>
+
+          <!-- Camera Source -->
+          <div id="cameraSource">
+            <div class="camera-container">
+              <video id="cameraVideo" autoplay playsinline></video>
+              <canvas id="overlayCanvas" class="camera-overlay"></canvas>
+            </div>
+          </div>
+
+          <!-- Upload Source -->
+          <div id="uploadSource" class="hidden">
+            <div class="upload-zone" id="uploadZone">
+              <p>Click to upload or drag & drop an image</p>
+              <p class="text-muted" style="font-size: 0.75rem; margin-top: 0.5rem;">Supports JPG, PNG</p>
+              <input type="file" id="fileInput" accept="image/*" style="display: none;">
+            </div>
+            <div class="camera-container hidden" id="uploadPreviewContainer">
+              <img id="uploadPreview" class="uploaded-preview" src="" alt="Preview">
+              <canvas id="uploadOverlayCanvas" class="camera-overlay"></canvas>
+            </div>
+          </div>
+
+          <div class="space-controls">
+            <button class="btn btn-primary" id="addSpaceBtn">Add Space</button>
+            <button class="btn btn-secondary" id="clearSpacesBtn">Clear All</button>
+            <button class="btn btn-secondary" id="captureRefBtn" disabled>Capture Reference</button>
+            <span class="space-counter" id="spaceCounter">0 spaces</span>
+          </div>
+
+          <div class="space-list" id="calibrationSpaceList">
+            <!-- Populated dynamically -->
+          </div>
+
+          <button class="btn btn-primary btn-block" id="saveCalibrationBtn" style="margin-top: 1rem;">
+            Save Calibration
+          </button>
+        </div>
+      </div>
+
+      <!-- Monitor Tab -->
+      <div class="tab-content hidden" id="tab-monitor">
+        <div class="card">
+          <div class="card-header">
+            <span class="card-title">Capture Control</span>
+            <span class="status-indicator" id="monitorStatus">
+              <span class="status-dot offline"></span>
+              Stopped
+            </span>
+          </div>
+
+          <!-- Monitor Source Toggle -->
+          <div class="source-toggle" style="margin-bottom: 1rem;">
+            <button class="btn active" id="monitorCameraBtn">Camera (Auto 30s)</button>
+            <button class="btn" id="monitorUploadBtn">Upload (Manual)</button>
+          </div>
+
+          <!-- Camera monitoring -->
+          <div id="monitorCameraMode">
+            <p style="margin-bottom: 1rem; color: var(--color-text-muted); font-size: 0.875rem;">
+              Start monitoring to begin capturing images every 30 seconds.
+            </p>
+            <div style="display: flex; gap: 0.5rem;">
+              <button class="btn btn-primary" id="startMonitorBtn">Start Monitoring</button>
+              <button class="btn btn-secondary" id="stopMonitorBtn" disabled>Stop</button>
+            </div>
+          </div>
+
+          <!-- Upload monitoring -->
+          <div id="monitorUploadMode" class="hidden">
+            <p style="margin-bottom: 1rem; color: var(--color-text-muted); font-size: 0.875rem;">
+              Upload an image to process and detect parking space status.
+            </p>
+            <div class="upload-zone" id="monitorUploadZone">
+              <p>Click to upload or drag & drop an image</p>
+              <p class="text-muted" style="font-size: 0.75rem; margin-top: 0.5rem;">Each upload triggers detection</p>
+              <input type="file" id="monitorFileInput" accept="image/*" style="display: none;">
+            </div>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="card-header">
+            <span class="card-title">Current Status</span>
+          </div>
+          <div class="space-list" id="monitorSpaceList">
+            <p class="text-muted">No data yet. Upload an image or start monitoring.</p>
+          </div>
+        </div>
+
+        <!-- Debug Section -->
+        <div class="debug-section" id="debugSection">
+          <div class="debug-header" onclick="toggleDebug()">
+            <span>Detection Debug Info</span>
+            <span id="debugToggle">▼</span>
+          </div>
+          <div class="debug-content hidden" id="debugContent">
+            <p class="text-muted">Process an image to see debug information.</p>
+          </div>
+        </div>
+      </div>
+
+      <!-- Recent Images Tab -->
+      <div class="tab-content hidden" id="tab-images">
+        <div class="card">
+          <div class="card-header">
+            <span class="card-title">Last 5 Captures</span>
+            <button class="btn btn-secondary" id="refreshImagesBtn">Refresh</button>
+          </div>
+
+          <div class="image-grid" id="imageGrid">
+            <p class="text-muted" style="grid-column: 1 / -1;">No images captured yet.</p>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Image Modal -->
+  <div class="modal hidden" id="imageModal">
+    <button class="modal-close" id="modalClose">&times;</button>
+    <div class="modal-content">
+      <img id="modalImage" src="" alt="Capture">
+    </div>
+  </div>
+
+  <script>
+    // State
+    let token = localStorage.getItem('parkingAdminToken');
+    let spaces = [];
+    let currentPoints = [];
+    let isDrawing = false;
+    let isMonitoring = false;
+    let monitorInterval = null;
+    let sourceMode = 'camera'; // 'camera' or 'upload'
+    let uploadedImage = null;
+
+    // Elements
+    const elements = {
+      loginScreen: document.getElementById('loginScreen'),
+      adminDashboard: document.getElementById('adminDashboard'),
+      loginForm: document.getElementById('loginForm'),
+      passwordInput: document.getElementById('passwordInput'),
+      loginError: document.getElementById('loginError'),
+      loginBtn: document.getElementById('loginBtn'),
+      logoutBtn: document.getElementById('logoutBtn'),
+      cameraVideo: document.getElementById('cameraVideo'),
+      overlayCanvas: document.getElementById('overlayCanvas'),
+      addSpaceBtn: document.getElementById('addSpaceBtn'),
+      clearSpacesBtn: document.getElementById('clearSpacesBtn'),
+      captureRefBtn: document.getElementById('captureRefBtn'),
+      spaceCounter: document.getElementById('spaceCounter'),
+      calibrationSpaceList: document.getElementById('calibrationSpaceList'),
+      saveCalibrationBtn: document.getElementById('saveCalibrationBtn'),
+      captureStatus: document.getElementById('captureStatus'),
+      monitorStatus: document.getElementById('monitorStatus'),
+      startMonitorBtn: document.getElementById('startMonitorBtn'),
+      stopMonitorBtn: document.getElementById('stopMonitorBtn'),
+      monitorSpaceList: document.getElementById('monitorSpaceList'),
+      imageGrid: document.getElementById('imageGrid'),
+      refreshImagesBtn: document.getElementById('refreshImagesBtn'),
+      imageModal: document.getElementById('imageModal'),
+      modalClose: document.getElementById('modalClose'),
+      modalImage: document.getElementById('modalImage'),
+      sourceCameraBtn: document.getElementById('sourceCameraBtn'),
+      sourceUploadBtn: document.getElementById('sourceUploadBtn'),
+      cameraSource: document.getElementById('cameraSource'),
+      uploadSource: document.getElementById('uploadSource'),
+      uploadZone: document.getElementById('uploadZone'),
+      fileInput: document.getElementById('fileInput'),
+      uploadPreview: document.getElementById('uploadPreview'),
+      uploadPreviewContainer: document.getElementById('uploadPreviewContainer'),
+      uploadOverlayCanvas: document.getElementById('uploadOverlayCanvas'),
+      monitorCameraBtn: document.getElementById('monitorCameraBtn'),
+      monitorUploadBtn: document.getElementById('monitorUploadBtn'),
+      monitorCameraMode: document.getElementById('monitorCameraMode'),
+      monitorUploadMode: document.getElementById('monitorUploadMode'),
+      monitorUploadZone: document.getElementById('monitorUploadZone'),
+      monitorFileInput: document.getElementById('monitorFileInput'),
+      debugContent: document.getElementById('debugContent'),
+      debugToggle: document.getElementById('debugToggle')
+    };
+
+    let debugVisible = false;
+
+    // API helpers
+    async function apiCall(endpoint, options = {}) {
+      const headers = { 'Content-Type': 'application/json' };
+      if (token) {
+        headers['Authorization'] = `Bearer ${token}`;
+      }
+
+      const response = await fetch(endpoint, {
+        ...options,
+        headers: { ...headers, ...options.headers }
+      });
+
+      if (response.status === 401) {
+        logout();
+        throw new Error('Session expired');
+      }
+
+      return response;
+    }
+
+    // Auth
+    async function login(password) {
+      const response = await fetch('/api/auth', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ password })
+      });
+
+      if (!response.ok) {
+        throw new Error('Invalid password');
+      }
+
+      const data = await response.json();
+      token = data.token;
+      localStorage.setItem('parkingAdminToken', token);
+    }
+
+    function logout() {
+      token = null;
+      localStorage.removeItem('parkingAdminToken');
+      elements.loginScreen.classList.remove('hidden');
+      elements.adminDashboard.classList.add('hidden');
+      stopCamera();
+      stopMonitoring();
+    }
+
+    async function checkAuth() {
+      if (!token) return false;
+
+      try {
+        const response = await apiCall('/api/calibration');
+        return response.ok;
+      } catch {
+        return false;
+      }
+    }
+
+    // Update canvas size to match display size
+    function updateCanvasSize() {
+      // Update camera overlay canvas
+      const cameraRect = elements.overlayCanvas.getBoundingClientRect();
+      if (cameraRect.width > 0 && cameraRect.height > 0) {
+        elements.overlayCanvas.width = cameraRect.width;
+        elements.overlayCanvas.height = cameraRect.height;
+      }
+
+      // Update upload overlay canvas
+      const uploadRect = elements.uploadOverlayCanvas.getBoundingClientRect();
+      if (uploadRect.width > 0 && uploadRect.height > 0) {
+        elements.uploadOverlayCanvas.width = uploadRect.width;
+        elements.uploadOverlayCanvas.height = uploadRect.height;
+      }
+
+      drawOverlay();
+    }
+
+    // Camera
+    async function startCamera() {
+      try {
+        const stream = await navigator.mediaDevices.getUserMedia({
+          video: { facingMode: 'environment', width: 1280, height: 720 }
+        });
+        elements.cameraVideo.srcObject = stream;
+
+        // Set canvas size when video metadata loads
+        elements.cameraVideo.onloadedmetadata = () => {
+          updateCanvasSize();
+        };
+      } catch (error) {
+        console.error('Camera error:', error);
+        alert('Failed to access camera. Please allow camera permissions.');
+      }
+    }
+
+    function stopCamera() {
+      const stream = elements.cameraVideo.srcObject;
+      if (stream) {
+        stream.getTracks().forEach(track => track.stop());
+      }
+    }
+
+    function captureFrame() {
+      if (sourceMode === 'upload' && uploadedImage) {
+        return uploadedImage;
+      }
+
+      const canvas = document.createElement('canvas');
+      canvas.width = elements.cameraVideo.videoWidth;
+      canvas.height = elements.cameraVideo.videoHeight;
+      const ctx = canvas.getContext('2d');
+      ctx.drawImage(elements.cameraVideo, 0, 0);
+      return canvas.toDataURL('image/jpeg', 0.7);
+    }
+
+    // Source mode switching
+    function setSourceMode(mode) {
+      sourceMode = mode;
+
+      elements.sourceCameraBtn.classList.toggle('active', mode === 'camera');
+      elements.sourceUploadBtn.classList.toggle('active', mode === 'upload');
+      elements.cameraSource.classList.toggle('hidden', mode !== 'camera');
+      elements.uploadSource.classList.toggle('hidden', mode !== 'upload');
+
+      if (mode === 'camera') {
+        startCamera();
+      } else {
+        stopCamera();
+      }
+    }
+
+    // File upload handling
+    function handleFileUpload(file) {
+      if (!file || !file.type.startsWith('image/')) {
+        alert('Please upload an image file.');
+        return;
+      }
+
+      const reader = new FileReader();
+      reader.onload = (e) => {
+        uploadedImage = e.target.result;
+        elements.uploadPreview.src = uploadedImage;
+        elements.uploadZone.classList.add('hidden');
+        elements.uploadPreviewContainer.classList.remove('hidden');
+
+        // Wait for image to load, then update canvas
+        elements.uploadPreview.onload = () => {
+          // Use setTimeout to ensure layout is complete
+          setTimeout(updateCanvasSize, 50);
+        };
+      };
+      reader.readAsDataURL(file);
+    }
+
+    function getActiveCanvas() {
+      return sourceMode === 'camera' ? elements.overlayCanvas : elements.uploadOverlayCanvas;
+    }
+
+    function getActiveVideoOrImage() {
+      return sourceMode === 'camera' ? elements.cameraVideo : elements.uploadPreview;
+    }
+
+    // Calculate render dimensions for object-fit: contain
+    function getContentRenderInfo(canvas, source) {
+      const rect = canvas.getBoundingClientRect();
+      const contentWidth = source.tagName === 'VIDEO' ? source.videoWidth : source.naturalWidth;
+      const contentHeight = source.tagName === 'VIDEO' ? source.videoHeight : source.naturalHeight;
+
+      if (!contentWidth || !contentHeight) {
+        return { renderWidth: rect.width, renderHeight: rect.height, offsetX: 0, offsetY: 0 };
+      }
+
+      const containerAspect = rect.width / rect.height;
+      const contentAspect = contentWidth / contentHeight;
+
+      let renderWidth, renderHeight, offsetX, offsetY;
+
+      if (contentAspect > containerAspect) {
+        renderWidth = rect.width;
+        renderHeight = rect.width / contentAspect;
+        offsetX = 0;
+        offsetY = (rect.height - renderHeight) / 2;
+      } else {
+        renderHeight = rect.height;
+        renderWidth = rect.height * contentAspect;
+        offsetX = (rect.width - renderWidth) / 2;
+        offsetY = 0;
+      }
+
+      return { renderWidth, renderHeight, offsetX, offsetY };
+    }
+
+    // Drawing
+    function drawOverlay() {
+      // Draw on camera canvas
+      if (elements.overlayCanvas.width && elements.overlayCanvas.height) {
+        const ctx = elements.overlayCanvas.getContext('2d');
+        const rect = elements.overlayCanvas.getBoundingClientRect();
+        ctx.clearRect(0, 0, rect.width, rect.height);
+
+        const renderInfo = getContentRenderInfo(elements.overlayCanvas, elements.cameraVideo);
+        drawSpacesOnCanvas(ctx, renderInfo);
+      }
+
+      // Draw on upload canvas
+      if (elements.uploadOverlayCanvas.width && elements.uploadOverlayCanvas.height) {
+        const ctx = elements.uploadOverlayCanvas.getContext('2d');
+        const rect = elements.uploadOverlayCanvas.getBoundingClientRect();
+        ctx.clearRect(0, 0, rect.width, rect.height);
+
+        const renderInfo = getContentRenderInfo(elements.uploadOverlayCanvas, elements.uploadPreview);
+        drawSpacesOnCanvas(ctx, renderInfo);
+      }
+    }
+
+    function drawSpacesOnCanvas(ctx, renderInfo) {
+      const { renderWidth, renderHeight, offsetX, offsetY } = renderInfo;
+
+      // Helper to convert normalized coords to canvas coords
+      const toCanvasX = (normX) => offsetX + normX * renderWidth;
+      const toCanvasY = (normY) => offsetY + normY * renderHeight;
+
+      // Draw existing spaces
+      spaces.forEach((space, index) => {
+        if (space.polygon.length < 3) return;
+
+        ctx.beginPath();
+        const firstPoint = space.polygon[0];
+        ctx.moveTo(toCanvasX(firstPoint[0]), toCanvasY(firstPoint[1]));
+
+        space.polygon.slice(1).forEach(p => {
+          ctx.lineTo(toCanvasX(p[0]), toCanvasY(p[1]));
+        });
+        ctx.closePath();
+
+        ctx.fillStyle = space.reference_image ? 'rgba(34, 197, 94, 0.3)' : 'rgba(59, 130, 246, 0.3)';
+        ctx.fill();
+        ctx.strokeStyle = space.reference_image ? '#22c55e' : '#3b82f6';
+        ctx.lineWidth = 2;
+        ctx.stroke();
+
+        // Label
+        const centerX = space.polygon.reduce((sum, p) => sum + p[0], 0) / space.polygon.length;
+        const centerY = space.polygon.reduce((sum, p) => sum + p[1], 0) / space.polygon.length;
+        ctx.fillStyle = 'white';
+        ctx.font = 'bold 16px sans-serif';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillText(space.id.toString(), toCanvasX(centerX), toCanvasY(centerY));
+      });
+
+      // Draw current points
+      if (currentPoints.length > 0) {
+        ctx.beginPath();
+        ctx.moveTo(toCanvasX(currentPoints[0][0]), toCanvasY(currentPoints[0][1]));
+        currentPoints.slice(1).forEach(p => {
+          ctx.lineTo(toCanvasX(p[0]), toCanvasY(p[1]));
+        });
+        ctx.strokeStyle = '#fbbf24';
+        ctx.lineWidth = 2;
+        ctx.stroke();
+
+        // Draw points
+        currentPoints.forEach(p => {
+          ctx.beginPath();
+          ctx.arc(toCanvasX(p[0]), toCanvasY(p[1]), 5, 0, Math.PI * 2);
+          ctx.fillStyle = '#fbbf24';
+          ctx.fill();
+        });
+      }
+    }
+
+    function handleCanvasClick(e) {
+      if (!isDrawing) return;
+
+      const canvas = getActiveCanvas();
+      const rect = canvas.getBoundingClientRect();
+
+      // Get the actual content dimensions (video or image)
+      const source = getActiveVideoOrImage();
+      const contentWidth = source.tagName === 'VIDEO' ? source.videoWidth : source.naturalWidth;
+      const contentHeight = source.tagName === 'VIDEO' ? source.videoHeight : source.naturalHeight;
+
+      if (!contentWidth || !contentHeight) {
+        console.error('No content dimensions available');
+        return;
+      }
+
+      // Calculate click position relative to container
+      const clickX = e.clientX - rect.left;
+      const clickY = e.clientY - rect.top;
+
+      // Calculate the actual rendered size with object-fit: contain
+      const containerAspect = rect.width / rect.height;
+      const contentAspect = contentWidth / contentHeight;
+
+      let renderWidth, renderHeight, offsetX, offsetY;
+
+      if (contentAspect > containerAspect) {
+        // Content is wider - letterbox on top/bottom
+        renderWidth = rect.width;
+        renderHeight = rect.width / contentAspect;
+        offsetX = 0;
+        offsetY = (rect.height - renderHeight) / 2;
+      } else {
+        // Content is taller - letterbox on sides
+        renderHeight = rect.height;
+        renderWidth = rect.height * contentAspect;
+        offsetX = (rect.width - renderWidth) / 2;
+        offsetY = 0;
+      }
+
+      // Adjust click position for letterboxing
+      const adjustedX = clickX - offsetX;
+      const adjustedY = clickY - offsetY;
+
+      // Check if click is within the actual content area
+      if (adjustedX < 0 || adjustedX > renderWidth || adjustedY < 0 || adjustedY > renderHeight) {
+        console.log('Click outside content area');
+        return;
+      }
+
+      // Normalize to 0-1 based on rendered content size
+      const x = adjustedX / renderWidth;
+      const y = adjustedY / renderHeight;
+
+      console.log('Click:', { clickX, clickY, adjustedX, adjustedY, renderWidth, renderHeight, x, y });
+
+      currentPoints.push([x, y]);
+      drawOverlay();
+
+      if (currentPoints.length === 4) {
+        // Complete the space
+        const newSpace = {
+          id: spaces.length + 1,
+          polygon: [...currentPoints],
+          reference_image: null
+        };
+        spaces.push(newSpace);
+        currentPoints = [];
+        isDrawing = false;
+        getActiveCanvas().classList.remove('drawing');
+        updateSpaceList();
+        drawOverlay();
+      }
+    }
+
+    function updateSpaceList() {
+      elements.spaceCounter.textContent = `${spaces.length} spaces`;
+
+      const list = elements.calibrationSpaceList;
+      list.innerHTML = '';
+
+      if (spaces.length === 0) {
+        list.innerHTML = '<p class="text-muted">No spaces defined yet.</p>';
+        elements.captureRefBtn.disabled = true;
+        return;
+      }
+
+      spaces.forEach((space, index) => {
+        const item = document.createElement('div');
+        item.className = 'space-item';
+        item.innerHTML = `
+          <span class="space-name">Space ${space.id}</span>
+          <div class="space-actions">
+            <span class="status-badge ${space.reference_image ? 'free' : 'unknown'}">
+              ${space.reference_image ? 'Has ref' : 'No ref'}
+            </span>
+            <button class="btn btn-secondary btn-small" onclick="captureReference(${index})">Ref</button>
+            <button class="btn btn-secondary btn-small" onclick="deleteSpace(${index})">Del</button>
+          </div>
+        `;
+        list.appendChild(item);
+      });
+
+      elements.captureRefBtn.disabled = false;
+    }
+
+    function deleteSpace(index) {
+      spaces.splice(index, 1);
+      // Renumber
+      spaces.forEach((s, i) => s.id = i + 1);
+      updateSpaceList();
+      drawOverlay();
+    }
+
+    function captureReference(index) {
+      const frame = captureFrame();
+      spaces[index].reference_image = frame;
+      updateSpaceList();
+      drawOverlay();
+    }
+
+    // Monitoring
+    async function startMonitoring() {
+      if (!spaces.length) {
+        alert('Please calibrate parking spaces first.');
+        return;
+      }
+
+      isMonitoring = true;
+      updateMonitorUI();
+
+      // Capture and upload immediately
+      await captureAndUpload();
+
+      // Then every 30 seconds
+      monitorInterval = setInterval(captureAndUpload, 30000);
+    }
+
+    function stopMonitoring() {
+      isMonitoring = false;
+      if (monitorInterval) {
+        clearInterval(monitorInterval);
+        monitorInterval = null;
+      }
+      updateMonitorUI();
+    }
+
+    async function captureAndUpload() {
+      try {
+        const frame = captureFrame();
+        const response = await apiCall('/api/upload', {
+          method: 'POST',
+          body: JSON.stringify({ image: frame })
+        });
+
+        if (response.ok) {
+          const data = await response.json();
+          updateMonitorSpaceList(data.results);
+        }
+      } catch (error) {
+        console.error('Upload failed:', error);
+      }
+    }
+
+    function updateMonitorUI() {
+      elements.startMonitorBtn.disabled = isMonitoring;
+      elements.stopMonitorBtn.disabled = !isMonitoring;
+
+      const statusEl = elements.captureStatus;
+      const monitorStatusEl = elements.monitorStatus;
+
+      if (isMonitoring) {
+        statusEl.textContent = 'Running';
+        statusEl.className = 'capture-status running';
+        monitorStatusEl.innerHTML = '<span class="status-dot online"></span> Running';
+      } else {
+        statusEl.textContent = 'Stopped';
+        statusEl.className = 'capture-status stopped';
+        monitorStatusEl.innerHTML = '<span class="status-dot offline"></span> Stopped';
+      }
+    }
+
+    function updateMonitorSpaceList(results) {
+      const list = elements.monitorSpaceList;
+      list.innerHTML = '';
+
+      results.forEach(result => {
+        const item = document.createElement('div');
+        item.className = 'space-item';
+        item.innerHTML = `
+          <span class="space-name">Space ${result.id}</span>
+          <span class="status-badge ${result.status}">${result.status} (${Math.round(result.confidence * 100)}%) - ${result.method || 'unknown'}</span>
+        `;
+        list.appendChild(item);
+      });
+
+      // Update debug display
+      updateDebugDisplay(results);
+    }
+
+    function toggleDebug() {
+      debugVisible = !debugVisible;
+      elements.debugContent.classList.toggle('hidden', !debugVisible);
+      elements.debugToggle.textContent = debugVisible ? '▲' : '▼';
+    }
+
+    function updateDebugDisplay(results) {
+      if (!results || results.length === 0) {
+        elements.debugContent.innerHTML = '<p class="text-muted">No debug data available.</p>';
+        return;
+      }
+
+      let html = '';
+      results.forEach(result => {
+        const debug = result.debug || {};
+        const statusClass = result.status === 'occupied' ? 'occupied' : 'free';
+
+        html += `<div class="debug-space ${statusClass}">`;
+        html += `<div class="debug-space-header">
+          <span>Space ${result.id}</span>
+          <span class="status-badge ${statusClass}">${result.status} (${Math.round(result.confidence * 100)}%)</span>
+        </div>`;
+
+        // Final Decision
+        html += `<div class="debug-row">
+          <span class="debug-label">Method:</span>
+          <span class="debug-value highlight">${result.method || 'unknown'}</span>
+        </div>`;
+
+        if (debug.decision_logic && debug.decision_logic.length > 0) {
+          html += `<div class="debug-row">
+            <span class="debug-label">Decision Logic:</span>
+            <span class="debug-value">${debug.decision_logic.join('; ')}</span>
+          </div>`;
+        }
+
+        // Image/Region Info
+        if (debug.image_size) {
+          html += `<div class="debug-subsection">
+            <div class="debug-subsection-title">Region Extraction</div>`;
+          html += `<div class="debug-row">
+            <span class="debug-label">Image Size:</span>
+            <span class="debug-value">${debug.image_size}</span>
+          </div>`;
+          if (debug.bounding_box) {
+            html += `<div class="debug-row">
+              <span class="debug-label">Bounding Box:</span>
+              <span class="debug-value">x=${debug.bounding_box.x}, y=${debug.bounding_box.y}, w=${debug.bounding_box.width}, h=${debug.bounding_box.height}</span>
+            </div>`;
+          }
+          if (debug.masked_pixels) {
+            html += `<div class="debug-row">
+              <span class="debug-label">Masked Pixels:</span>
+              <span class="debug-value">${debug.masked_pixels.toLocaleString()}</span>
+            </div>`;
+          }
+          html += `</div>`;
+        }
+
+        // Pixel Difference
+        if (debug.has_reference) {
+          html += `<div class="debug-subsection">
+            <div class="debug-subsection-title">Pixel Difference Analysis</div>`;
+          html += `<div class="debug-row">
+            <span class="debug-label">Has Reference:</span>
+            <span class="debug-value success">Yes</span>
+          </div>`;
+          if (debug.diff_ratio !== undefined) {
+            const diffClass = debug.diff_ratio > debug.pixel_threshold ? 'error' : 'success';
+            html += `<div class="debug-row">
+              <span class="debug-label">Diff Ratio:</span>
+              <span class="debug-value ${diffClass}">${(debug.diff_ratio * 100).toFixed(2)}% (threshold: ${(debug.pixel_threshold * 100).toFixed(0)}%)</span>
+            </div>`;
+          }
+          if (debug.current_mean_intensity !== undefined) {
+            html += `<div class="debug-row">
+              <span class="debug-label">Current Mean Intensity:</span>
+              <span class="debug-value">${debug.current_mean_intensity.toFixed(1)}</span>
+            </div>`;
+          }
+          if (debug.reference_mean_intensity !== undefined) {
+            html += `<div class="debug-row">
+              <span class="debug-label">Reference Mean Intensity:</span>
+              <span class="debug-value">${debug.reference_mean_intensity.toFixed(1)}</span>
+            </div>`;
+          }
+          if (debug.diff_mean !== undefined) {
+            html += `<div class="debug-row">
+              <span class="debug-label">Diff Mean/Max/Std:</span>
+              <span class="debug-value">${debug.diff_mean.toFixed(1)} / ${debug.diff_max.toFixed(1)} / ${debug.diff_std.toFixed(1)}</span>
+            </div>`;
+          }
+          if (debug.non_zero_diff_pixels !== undefined) {
+            html += `<div class="debug-row">
+              <span class="debug-label">Changed Pixels:</span>
+              <span class="debug-value">${debug.non_zero_diff_pixels.toLocaleString()} / ${debug.total_region_pixels.toLocaleString()}</span>
+            </div>`;
+          }
+          if (debug.pixel_method_result) {
+            html += `<div class="debug-row">
+              <span class="debug-label">Pixel Method Result:</span>
+              <span class="debug-value ${debug.pixel_method_result === 'occupied' ? 'error' : 'success'}">${debug.pixel_method_result}</span>
+            </div>`;
+          }
+          html += `</div>`;
+        } else {
+          html += `<div class="debug-subsection">
+            <div class="debug-subsection-title">Pixel Difference Analysis</div>
+            <div class="debug-row">
+              <span class="debug-label">Has Reference:</span>
+              <span class="debug-value error">No - capture reference image first</span>
+            </div>
+          </div>`;
+        }
+
+        // Color Analysis
+        if (debug.color_analysis) {
+          const ca = debug.color_analysis;
+          html += `<div class="debug-subsection">
+            <div class="debug-subsection-title">Color Analysis</div>`;
+          html += `<div class="debug-row">
+            <span class="debug-label">Mean Brightness:</span>
+            <span class="debug-value">${ca.mean_brightness.toFixed(1)}</span>
+          </div>`;
+          html += `<div class="debug-row">
+            <span class="debug-label">Dark Pixel Ratio:</span>
+            <span class="debug-value">${(ca.dark_pixel_ratio * 100).toFixed(1)}%</span>
+          </div>`;
+          html += `<div class="debug-row">
+            <span class="debug-label">Has Dark Object:</span>
+            <span class="debug-value ${ca.has_dark_object ? 'error' : 'success'}">${ca.has_dark_object ? 'Yes' : 'No'}</span>
+          </div>`;
+          html += `</div>`;
+        }
+
+        // TensorFlow
+        html += `<div class="debug-subsection">
+          <div class="debug-subsection-title">TensorFlow Detection</div>`;
+        if (debug.tf_status === 'success') {
+          html += `<div class="debug-row">
+            <span class="debug-label">TF Status:</span>
+            <span class="debug-value success">Loaded & Running</span>
+          </div>`;
+          if (debug.tf_crop_size) {
+            html += `<div class="debug-row">
+              <span class="debug-label">TF Crop Size:</span>
+              <span class="debug-value">${debug.tf_crop_size}</span>
+            </div>`;
+          }
+          if (debug.tf_best_vehicle) {
+            const tfResult = debug.tf_best_vehicle;
+            html += `<div class="debug-row">
+              <span class="debug-label">Best Vehicle Detection:</span>
+              <span class="debug-value">${tfResult.type || 'none'} (${(tfResult.score * 100).toFixed(1)}%)</span>
+            </div>`;
+          }
+          if (debug.tf_detections && debug.tf_detections.length > 0) {
+            html += `<div class="debug-row">
+              <span class="debug-label">All Detections:</span>
+              <span class="debug-value">${debug.tf_detections.map(d => `${d.class}: ${(d.score * 100).toFixed(0)}%`).join(', ')}</span>
+            </div>`;
+          }
+          if (debug.tf_method_result) {
+            html += `<div class="debug-row">
+              <span class="debug-label">TF Method Result:</span>
+              <span class="debug-value ${debug.tf_method_result === 'occupied' ? 'error' : 'success'}">${debug.tf_method_result}</span>
+            </div>`;
+          }
+          // Show TF debug image with detections
+          if (debug.tf_debug_image) {
+            html += `<div class="debug-row" style="flex-direction: column; align-items: flex-start;">
+              <span class="debug-label" style="margin-bottom: 0.5rem;">TF Detection Visual:</span>
+              <img src="${debug.tf_debug_image}" alt="TF Detections" style="max-width: 100%; border-radius: 4px; border: 1px solid var(--color-border);">
+            </div>`;
+          }
+        } else {
+          html += `<div class="debug-row">
+            <span class="debug-label">TF Status:</span>
+            <span class="debug-value error">${debug.tf_status || 'not available'}</span>
+          </div>`;
+        }
+        html += `</div>`;
+
+        // Raw JSON option
+        html += `<div class="debug-subsection">
+          <div class="debug-subsection-title" style="cursor: pointer;" onclick="this.nextElementSibling.classList.toggle('hidden')">
+            Raw Debug JSON (click to toggle)
+          </div>
+          <div class="debug-json hidden">${JSON.stringify(debug, null, 2)}</div>
+        </div>`;
+
+        html += `</div>`; // close debug-space
+      });
+
+      elements.debugContent.innerHTML = html;
+    }
+
+    // Handle manual image upload for monitoring
+    async function handleMonitorUpload(file) {
+      if (!file || !file.type.startsWith('image/')) {
+        alert('Please upload an image file.');
+        return;
+      }
+
+      if (!spaces.length) {
+        alert('Please calibrate parking spaces first.');
+        return;
+      }
+
+      const reader = new FileReader();
+      reader.onload = async (e) => {
+        const imageBase64 = e.target.result;
+
+        elements.monitorUploadZone.innerHTML = '<p>Processing...</p>';
+
+        try {
+          const response = await apiCall('/api/upload', {
+            method: 'POST',
+            body: JSON.stringify({ image: imageBase64 })
+          });
+
+          if (response.ok) {
+            const data = await response.json();
+            updateMonitorSpaceList(data.results);
+            elements.monitorUploadZone.innerHTML = `
+              <p>Click to upload or drag & drop an image</p>
+              <p class="text-muted" style="font-size: 0.75rem; margin-top: 0.5rem;">Last processed: ${new Date().toLocaleTimeString()}</p>
+            `;
+          } else {
+            throw new Error('Upload failed');
+          }
+        } catch (error) {
+          console.error('Monitor upload failed:', error);
+          alert('Failed to process image: ' + error.message);
+          elements.monitorUploadZone.innerHTML = `
+            <p>Click to upload or drag & drop an image</p>
+            <p class="text-muted" style="font-size: 0.75rem; margin-top: 0.5rem;">Each upload triggers detection</p>
+          `;
+        }
+      };
+      reader.readAsDataURL(file);
+    }
+
+    // Recent Images
+    async function loadRecentImages() {
+      try {
+        const response = await apiCall('/api/recent-images');
+        if (response.ok) {
+          const data = await response.json();
+          renderImageGrid(data.images);
+        }
+      } catch (error) {
+        console.error('Failed to load images:', error);
+      }
+    }
+
+    function renderImageGrid(images) {
+      const grid = elements.imageGrid;
+
+      if (!images || images.length === 0) {
+        grid.innerHTML = '<p class="text-muted" style="grid-column: 1 / -1;">No images captured yet.</p>';
+        return;
+      }
+
+      grid.innerHTML = '';
+      images.forEach(img => {
+        const container = document.createElement('div');
+        container.innerHTML = `
+          <img src="${img.image}" alt="Capture" onclick="showModal('${img.image}')">
+          <div class="image-timestamp">${formatTime(img.timestamp)}</div>
+        `;
+        grid.appendChild(container);
+      });
+    }
+
+    function showModal(src) {
+      elements.modalImage.src = src;
+      elements.imageModal.classList.remove('hidden');
+    }
+
+    function hideModal() {
+      elements.imageModal.classList.add('hidden');
+    }
+
+    function formatTime(isoString) {
+      if (!isoString) return '';
+      return new Date(isoString).toLocaleTimeString();
+    }
+
+    // Calibration save/load
+    async function saveCalibration() {
+      if (!spaces.length) {
+        alert('No spaces to save.');
+        return;
+      }
+
+      // Auto-capture reference images for spaces that don't have one
+      const frame = captureFrame();
+      let referencesAdded = 0;
+      spaces.forEach(space => {
+        if (!space.reference_image) {
+          space.reference_image = frame;
+          referencesAdded++;
+        }
+      });
+
+      if (referencesAdded > 0) {
+        updateSpaceList();
+        drawOverlay();
+        console.log(`Auto-captured reference images for ${referencesAdded} spaces`);
+      }
+
+      try {
+        const response = await apiCall('/api/calibration', {
+          method: 'POST',
+          body: JSON.stringify({ spaces })
+        });
+
+        if (response.ok) {
+          const msg = referencesAdded > 0
+            ? `Calibration saved! Auto-captured reference for ${referencesAdded} space(s).`
+            : 'Calibration saved successfully!';
+          alert(msg);
+        } else {
+          throw new Error('Save failed');
+        }
+      } catch (error) {
+        alert('Failed to save calibration: ' + error.message);
+      }
+    }
+
+    async function loadCalibration() {
+      try {
+        const response = await apiCall('/api/calibration');
+        if (response.ok) {
+          const data = await response.json();
+          if (data.spaces && data.spaces.length > 0) {
+            spaces = data.spaces;
+            updateSpaceList();
+            drawOverlay();
+          }
+        }
+      } catch (error) {
+        console.error('Failed to load calibration:', error);
+      }
+    }
+
+    // Tab switching
+    document.querySelectorAll('.tab').forEach(tab => {
+      tab.addEventListener('click', () => {
+        const tabId = tab.dataset.tab;
+
+        // Update tab buttons
+        document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+        tab.classList.add('active');
+
+        // Update tab content
+        document.querySelectorAll('.tab-content').forEach(c => c.classList.add('hidden'));
+        document.getElementById(`tab-${tabId}`).classList.remove('hidden');
+
+        // Load data for specific tabs
+        if (tabId === 'images') {
+          loadRecentImages();
+        }
+      });
+    });
+
+    // Event listeners
+    elements.loginForm.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      elements.loginError.classList.add('hidden');
+      elements.loginBtn.disabled = true;
+      elements.loginBtn.textContent = 'Signing in...';
+
+      try {
+        await login(elements.passwordInput.value);
+        elements.loginScreen.classList.add('hidden');
+        elements.adminDashboard.classList.remove('hidden');
+        await startCamera();
+        await loadCalibration();
+      } catch (error) {
+        elements.loginError.textContent = error.message;
+        elements.loginError.classList.remove('hidden');
+      } finally {
+        elements.loginBtn.disabled = false;
+        elements.loginBtn.textContent = 'Sign In';
+      }
+    });
+
+    elements.logoutBtn.addEventListener('click', logout);
+
+    // Source toggle
+    elements.sourceCameraBtn.addEventListener('click', () => setSourceMode('camera'));
+    elements.sourceUploadBtn.addEventListener('click', () => setSourceMode('upload'));
+
+    // File upload
+    elements.uploadZone.addEventListener('click', () => elements.fileInput.click());
+    elements.fileInput.addEventListener('change', (e) => {
+      if (e.target.files[0]) handleFileUpload(e.target.files[0]);
+    });
+    elements.uploadZone.addEventListener('dragover', (e) => {
+      e.preventDefault();
+      elements.uploadZone.classList.add('dragover');
+    });
+    elements.uploadZone.addEventListener('dragleave', () => {
+      elements.uploadZone.classList.remove('dragover');
+    });
+    elements.uploadZone.addEventListener('drop', (e) => {
+      e.preventDefault();
+      elements.uploadZone.classList.remove('dragover');
+      if (e.dataTransfer.files[0]) handleFileUpload(e.dataTransfer.files[0]);
+    });
+
+    elements.addSpaceBtn.addEventListener('click', () => {
+      isDrawing = true;
+      currentPoints = [];
+      getActiveCanvas().classList.add('drawing');
+    });
+
+    elements.clearSpacesBtn.addEventListener('click', () => {
+      if (confirm('Clear all spaces?')) {
+        spaces = [];
+        currentPoints = [];
+        isDrawing = false;
+        getActiveCanvas().classList.remove('drawing');
+        updateSpaceList();
+        drawOverlay();
+      }
+    });
+
+    elements.captureRefBtn.addEventListener('click', () => {
+      spaces.forEach((_, i) => captureReference(i));
+    });
+
+    elements.saveCalibrationBtn.addEventListener('click', saveCalibration);
+
+    elements.overlayCanvas.addEventListener('click', handleCanvasClick);
+    elements.uploadOverlayCanvas.addEventListener('click', handleCanvasClick);
+
+    elements.startMonitorBtn.addEventListener('click', startMonitoring);
+    elements.stopMonitorBtn.addEventListener('click', stopMonitoring);
+
+    // Monitor mode toggle
+    elements.monitorCameraBtn.addEventListener('click', () => {
+      elements.monitorCameraBtn.classList.add('active');
+      elements.monitorUploadBtn.classList.remove('active');
+      elements.monitorCameraMode.classList.remove('hidden');
+      elements.monitorUploadMode.classList.add('hidden');
+    });
+
+    elements.monitorUploadBtn.addEventListener('click', () => {
+      elements.monitorUploadBtn.classList.add('active');
+      elements.monitorCameraBtn.classList.remove('active');
+      elements.monitorUploadMode.classList.remove('hidden');
+      elements.monitorCameraMode.classList.add('hidden');
+    });
+
+    // Monitor upload handlers
+    elements.monitorUploadZone.addEventListener('click', () => elements.monitorFileInput.click());
+    elements.monitorFileInput.addEventListener('change', async (e) => {
+      if (e.target.files[0]) {
+        await handleMonitorUpload(e.target.files[0]);
+        e.target.value = ''; // Reset so same file can be uploaded again
+      }
+    });
+    elements.monitorUploadZone.addEventListener('dragover', (e) => {
+      e.preventDefault();
+      elements.monitorUploadZone.classList.add('dragover');
+    });
+    elements.monitorUploadZone.addEventListener('dragleave', () => {
+      elements.monitorUploadZone.classList.remove('dragover');
+    });
+    elements.monitorUploadZone.addEventListener('drop', async (e) => {
+      e.preventDefault();
+      elements.monitorUploadZone.classList.remove('dragover');
+      if (e.dataTransfer.files[0]) {
+        await handleMonitorUpload(e.dataTransfer.files[0]);
+      }
+    });
+
+    elements.refreshImagesBtn.addEventListener('click', loadRecentImages);
+
+    elements.modalClose.addEventListener('click', hideModal);
+    elements.imageModal.addEventListener('click', (e) => {
+      if (e.target === elements.imageModal) hideModal();
+    });
+
+    // Handle window resize
+    window.addEventListener('resize', () => {
+      updateCanvasSize();
+    });
+
+    // Initialize
+    (async () => {
+      if (await checkAuth()) {
+        elements.loginScreen.classList.add('hidden');
+        elements.adminDashboard.classList.remove('hidden');
+        await startCamera();
+        await loadCalibration();
+      }
+    })();
+  </script>
+</body>
+</html>

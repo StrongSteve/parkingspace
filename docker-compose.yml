@@ -1,0 +1,18 @@
+# Local development docker-compose
+version: '3.8'
+
+services:
+  parking-monitor:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - "8000:8000"
+    environment:
+      - PORT=8000
+      - PIXEL_THRESHOLD=0.15
+      - TF_CONFIDENCE=0.5
+    volumes:
+      # Mount source for development (hot reload would require additional setup)
+      - ./backend:/app:ro
+    restart: unless-stopped
