@@ -4,4 +4,5 @@ python-multipart==0.0.6
 Pillow==10.2.0
 numpy==1.26.3
 opencv-python-headless==4.9.0.80
-tensorflow==2.15.0
+# Use tflite-runtime instead of full tensorflow (~2MB vs ~500MB, ~50MB RAM vs ~1GB)
+tflite-runtime==2.14.0

@@ -12,3 +12,7 @@ services:
         value: 0.15
       - key: TF_CONFIDENCE
         value: 0.5
+      - key: TF_ENABLED
+        value: "true"
+      - key: TF_PRELOAD
+        value: "false"  # Don't preload on startup to save memory

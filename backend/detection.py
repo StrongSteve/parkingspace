@@ -13,11 +13,23 @@ import logging
 
 logger = logging.getLogger(__name__)
 
-# TensorFlow import (lazy loaded)
-_tf_model = None
+# TensorFlow Lite interpreter (lazy loaded) - much lower memory than full TF
+_tflite_interpreter = None
+_tflite_enabled = True  # Can be disabled for low-memory environments
+_tflite_model_path = None
 
 # ORB feature detector (reusable)
 _orb_detector = None
+
+# COCO class names for vehicle detection
+COCO_VEHICLE_CLASSES = {1: 'person', 3: 'car', 4: 'motorcycle', 6: 'bus', 8: 'truck', 2: 'bicycle'}
+
+
+def set_tf_enabled(enabled: bool):
+    """Enable or disable TensorFlow Lite detection globally."""
+    global _tflite_enabled
+    _tflite_enabled = enabled
+    logger.info(f"TensorFlow Lite detection {'enabled' if enabled else 'disabled'}")
 
 
 def _get_orb_detector():
@@ -28,24 +40,67 @@ def _get_orb_detector():
     return _orb_detector
 
 
+def _download_tflite_model():
+    """Download TFLite model if not present."""
+    import urllib.request
+    import os
+
+    model_dir = os.path.dirname(os.path.abspath(__file__))
+    model_path = os.path.join(model_dir, 'efficientdet_lite0.tflite')
+
+    if os.path.exists(model_path):
+        return model_path
+
+    # Download EfficientDet-Lite0 model (~4MB, good accuracy, low memory)
+    model_url = "https://storage.googleapis.com/tfhub-lite-models/tensorflow/lite-model/efficientdet/lite0/detection/metadata/1.tflite"
+
+    logger.info(f"Downloading TFLite model from {model_url}...")
+    try:
+        urllib.request.urlretrieve(model_url, model_path)
+        logger.info(f"TFLite model downloaded to {model_path}")
+        return model_path
+    except Exception as e:
+        logger.error(f"Failed to download TFLite model: {e}")
+        return None
+
+
 def _load_tf_model():
-    """Lazy load TensorFlow model."""
-    global _tf_model
-    if _tf_model is None:
+    """Lazy load TensorFlow Lite interpreter (much lower memory than full TF)."""
+    global _tflite_interpreter, _tflite_enabled, _tflite_model_path
+
+    # Check if TF is disabled
+    if not _tflite_enabled:
+        return None
+
+    if _tflite_interpreter is None:
         try:
-            import tensorflow as tf
-            import tensorflow_hub as hub
-            logger.info("Loading TensorFlow model...")
-            _tf_model = hub.load("https://tfhub.dev/tensorflow/ssd_mobilenet_v2/2")
-            logger.info("TensorFlow model loaded successfully")
+            # Try to use tflite-runtime first (smaller), fall back to full tensorflow
+            try:
+                from tflite_runtime.interpreter import Interpreter
+                logger.info("Using tflite-runtime (lightweight)")
+            except ImportError:
+                from tensorflow.lite.python.interpreter import Interpreter
+                logger.info("Using tensorflow.lite interpreter")
+
+            # Download model if needed
+            _tflite_model_path = _download_tflite_model()
+            if _tflite_model_path is None:
+                _tflite_interpreter = False
+                return None
+
+            logger.info("Loading TFLite model...")
+            _tflite_interpreter = Interpreter(model_path=_tflite_model_path)
+            _tflite_interpreter.allocate_tensors()
+            logger.info("TFLite model loaded successfully (~50MB memory)")
         except Exception as e:
-            logger.warning(f"Failed to load TensorFlow model: {e}")
-            _tf_model = False  # Mark as failed, don't retry
-    return _tf_model if _tf_model else None
+            logger.warning(f"Failed to load TFLite model: {e}")
+            _tflite_interpreter = False  # Mark as failed, don't retry
+
+    return _tflite_interpreter if _tflite_interpreter else None
 
 
 def preload_tf_model() -> bool:
-    """Preload TensorFlow model at startup.
+    """Preload TensorFlow Lite model at startup.
 
     Returns True if model loaded successfully, False otherwise.
     """
@@ -576,22 +631,21 @@ def box_overlap_ratio(box1, box2):
 
 
 def detect_vehicles_tf(image: np.ndarray, polygon: List[List[float]], debug_info: dict = None) -> Tuple[bool, float, Optional[str]]:
-    """Use TensorFlow to detect vehicles in the polygon region.
+    """Use TensorFlow Lite to detect vehicles in the polygon region.
 
     Runs detection on full image and checks if any vehicle overlaps with the parking space.
+    Uses EfficientDet-Lite0 model (~4MB, ~50MB memory) for low-memory environments.
 
     Returns:
         Tuple of (vehicle_detected, confidence, vehicle_type)
     """
-    model = _load_tf_model()
-    if model is None:
+    interpreter = _load_tf_model()
+    if interpreter is None:
         if debug_info is not None:
             debug_info['tf_status'] = 'model_not_loaded'
         return False, 0.0, None
 
     try:
-        import tensorflow as tf
-
         h, w = image.shape[:2]
 
         # Convert polygon to normalized bounding box
@@ -602,19 +656,30 @@ def detect_vehicles_tf(image: np.ndarray, polygon: List[List[float]], debug_info
         if debug_info is not None:
             debug_info['tf_space_box'] = [float(b) for b in space_box]
 
-        # Prepare full image for TensorFlow
+        # Get input/output details
+        input_details = interpreter.get_input_details()
+        output_details = interpreter.get_output_details()
+
+        # Get expected input size
+        input_shape = input_details[0]['shape']
+        input_height, input_width = input_shape[1], input_shape[2]
+
+        # Prepare image for TFLite (resize to model input size)
         rgb = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
-        input_tensor = tf.convert_to_tensor(rgb)[tf.newaxis, ...]
+        resized = cv2.resize(rgb, (input_width, input_height))
+        input_data = np.expand_dims(resized, axis=0).astype(np.uint8)
 
-        # Run detection on full image
-        results = model(input_tensor)
+        # Run inference
+        interpreter.set_tensor(input_details[0]['index'], input_data)
+        interpreter.invoke()
 
-        # Parse results
-        classes = results['detection_classes'][0].numpy().astype(int)
-        scores = results['detection_scores'][0].numpy()
-        boxes = results['detection_boxes'][0].numpy()  # [ymin, xmin, ymax, xmax] normalized
+        # Get results - EfficientDet-Lite outputs
+        # Output order: boxes, classes, scores, num_detections
+        boxes = interpreter.get_tensor(output_details[0]['index'])[0]  # [ymin, xmin, ymax, xmax]
+        classes = interpreter.get_tensor(output_details[1]['index'])[0].astype(int)
+        scores = interpreter.get_tensor(output_details[2]['index'])[0]
 
-        # COCO classes for vehicles: car=3, motorcycle=4, bus=6, truck=8
+        # COCO classes for vehicles (EfficientDet uses 1-indexed COCO)
         vehicle_classes = {3: 'car', 4: 'motorcycle', 6: 'bus', 8: 'truck'}
 
         best_score = 0.0
@@ -649,6 +714,7 @@ def detect_vehicles_tf(image: np.ndarray, polygon: List[List[float]], debug_info
                 class_name = vehicle_classes.get(cls, f'class_{cls}')
                 is_vehicle = cls in vehicle_classes
 
+                # Box is already normalized [ymin, xmin, ymax, xmax]
                 # Check if this detection overlaps with parking space
                 overlap = box_overlap_ratio(space_box, box)
 
@@ -704,7 +770,7 @@ def detect_vehicles_tf(image: np.ndarray, polygon: List[List[float]], debug_info
         return detected, best_score, best_type
 
     except Exception as e:
-        logger.error(f"TensorFlow detection error: {e}")
+        logger.error(f"TFLite detection error: {e}")
         if debug_info is not None:
             debug_info['tf_status'] = f'error: {str(e)}'
         return False, 0.0, None
@@ -884,20 +950,34 @@ def detect_all_spaces(
         if aligned:
             logger.info(f"Image aligned successfully")
 
-    # Run TensorFlow detection on full image once to get all vehicle boxes
+    # Run TensorFlow Lite detection on full image once to get all vehicle boxes
     all_vehicle_boxes = []
     try:
-        model = _load_tf_model()
-        if model is not None:
-            import tensorflow as tf
+        interpreter = _load_tf_model()
+        if interpreter is not None:
             h, w = aligned_image.shape[:2]
-            rgb = cv2.cvtColor(aligned_image, cv2.COLOR_BGR2RGB)
-            input_tensor = tf.convert_to_tensor(rgb)[tf.newaxis, ...]
-            results_tf = model(input_tensor)
 
-            classes = results_tf['detection_classes'][0].numpy().astype(int)
-            scores = results_tf['detection_scores'][0].numpy()
-            boxes = results_tf['detection_boxes'][0].numpy()
+            # Get input/output details
+            input_details = interpreter.get_input_details()
+            output_details = interpreter.get_output_details()
+
+            # Get expected input size
+            input_shape = input_details[0]['shape']
+            input_height, input_width = input_shape[1], input_shape[2]
+
+            # Prepare image for TFLite
+            rgb = cv2.cvtColor(aligned_image, cv2.COLOR_BGR2RGB)
+            resized = cv2.resize(rgb, (input_width, input_height))
+            input_data = np.expand_dims(resized, axis=0).astype(np.uint8)
+
+            # Run inference
+            interpreter.set_tensor(input_details[0]['index'], input_data)
+            interpreter.invoke()
+
+            # Get results
+            boxes = interpreter.get_tensor(output_details[0]['index'])[0]
+            classes = interpreter.get_tensor(output_details[1]['index'])[0].astype(int)
+            scores = interpreter.get_tensor(output_details[2]['index'])[0]
 
             vehicle_classes = {3: 'car', 4: 'motorcycle', 6: 'bus', 8: 'truck'}
 
@@ -916,7 +996,7 @@ def detect_all_spaces(
                     })
             global_info['vehicle_boxes'] = all_vehicle_boxes
     except Exception as e:
-        logger.error(f"Global TF detection failed: {e}")
+        logger.error(f"Global TFLite detection failed: {e}")
 
     for space in spaces:
         result = detect_space(aligned_image, space, pixel_threshold, tf_confidence)

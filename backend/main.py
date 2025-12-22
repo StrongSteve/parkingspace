@@ -19,7 +19,7 @@ from pydantic import BaseModel
 from detection import (
     detect_all_spaces, encode_image_base64, decode_base64_image,
     extract_reference_features, generate_privacy_visualization,
-    preload_tf_model
+    preload_tf_model, set_tf_enabled
 )
 
 # Configure logging
@@ -32,6 +32,8 @@ logger = logging.getLogger(__name__)
 # Configuration
 PIXEL_THRESHOLD = float(os.getenv('PIXEL_THRESHOLD', '0.15'))
 TF_CONFIDENCE = float(os.getenv('TF_CONFIDENCE', '0.5'))
+TF_ENABLED = os.getenv('TF_ENABLED', 'true').lower() in ('true', '1', 'yes')
+TF_PRELOAD = os.getenv('TF_PRELOAD', 'false').lower() in ('true', '1', 'yes')
 MAX_RECENT_IMAGES = 5
 CALIBRATION_FILE = Path(__file__).parent / 'calibration.json'
 
@@ -121,19 +123,29 @@ async def lifespan(app: FastAPI):
     logger.info("=" * 50)
     logger.info(f"ADMIN PASSWORD: {state.admin_password}")
     logger.info("=" * 50)
+    logger.info(f"TF_ENABLED: {TF_ENABLED}, TF_PRELOAD: {TF_PRELOAD}")
+    logger.info("=" * 50)
 
-    # Preload TensorFlow model in background
-    import threading
-    def load_model():
-        logger.info("Preloading TensorFlow model...")
-        success = preload_tf_model()
-        if success:
-            logger.info("TensorFlow model ready!")
-        else:
-            logger.warning("TensorFlow model failed to load")
+    # Configure TensorFlow detection
+    set_tf_enabled(TF_ENABLED)
 
-    thread = threading.Thread(target=load_model, daemon=True)
-    thread.start()
+    # Optionally preload TensorFlow model in background (disabled by default for low-memory environments)
+    if TF_ENABLED and TF_PRELOAD:
+        import threading
+        def load_model():
+            logger.info("Preloading TensorFlow model...")
+            success = preload_tf_model()
+            if success:
+                logger.info("TensorFlow model ready!")
+            else:
+                logger.warning("TensorFlow model failed to load")
+
+        thread = threading.Thread(target=load_model, daemon=True)
+        thread.start()
+    elif TF_ENABLED:
+        logger.info("TensorFlow enabled but will load on first detection (saves memory)")
+    else:
+        logger.info("TensorFlow detection disabled - using pixel diff only")
 
     yield
     # Shutdown
