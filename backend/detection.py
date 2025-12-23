@@ -1355,6 +1355,7 @@ def detect_all_spaces(
     all_vehicle_boxes = []
     h, w = aligned_image.shape[:2]
     min_confidence = 0.20  # Show detections with 20%+ confidence
+    max_box_area = 0.25  # Filter out giant boxes (>25% of image) for visualization only
 
     try:
         # Run TFLite detection
@@ -1362,6 +1363,11 @@ def detect_all_spaces(
         for box, cls, score in zip(tflite_boxes, tflite_classes, tflite_scores):
             if int(cls) in COCO_VEHICLE_CLASSES and score > min_confidence:
                 ymin, xmin, ymax, xmax = box
+                box_area = (ymax - ymin) * (xmax - xmin)
+                # Skip giant boxes for visualization (false positives)
+                if box_area > max_box_area:
+                    logger.debug(f"Skipping giant TFLite box for viz: area={box_area:.1%}")
+                    continue
                 all_vehicle_boxes.append({
                     'type': COCO_VEHICLE_CLASSES[int(cls)],
                     'score': float(score),
@@ -1378,6 +1384,11 @@ def detect_all_spaces(
         for box, cls, score in zip(dnn_boxes, dnn_classes, dnn_scores):
             if int(cls) in VOC_VEHICLE_CLASSES and score > min_confidence:
                 ymin, xmin, ymax, xmax = box
+                box_area = (ymax - ymin) * (xmax - xmin)
+                # Skip giant boxes for visualization (false positives)
+                if box_area > max_box_area:
+                    logger.debug(f"Skipping giant DNN box for viz: area={box_area:.1%}")
+                    continue
                 all_vehicle_boxes.append({
                     'type': VOC_VEHICLE_CLASSES[int(cls)],
                     'score': float(score),
