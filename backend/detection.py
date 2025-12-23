@@ -1010,12 +1010,28 @@ def detect_vehicles_tf(image: np.ndarray, polygon: List[List[float]], debug_info
         }
         debug_info['backend'] = 'dual'
 
-    # Primary result from OpenCV DNN (or TFLite if DNN not available)
-    if opencv_result.get('status') == 'success':
-        return opencv_result.get('detected', False), opencv_result.get('confidence', 0.0), opencv_result.get('vehicle_type')
-    elif tflite_result.get('status') == 'success':
-        return tflite_result.get('detected', False), tflite_result.get('confidence', 0.0), tflite_result.get('vehicle_type')
+    # Primary result: prefer whichever backend detected a vehicle with higher confidence
+    # If both detect, use the one with higher confidence
+    # If only one detects, use that one
+    opencv_detected = opencv_result.get('detected', False)
+    opencv_conf = opencv_result.get('confidence', 0.0)
+    tflite_detected = tflite_result.get('detected', False)
+    tflite_conf = tflite_result.get('confidence', 0.0)
+
+    if opencv_detected and tflite_detected:
+        # Both detect - use higher confidence
+        if opencv_conf >= tflite_conf:
+            return True, opencv_conf, opencv_result.get('vehicle_type')
+        else:
+            return True, tflite_conf, tflite_result.get('vehicle_type')
+    elif tflite_detected:
+        # Only TFLite detects
+        return True, tflite_conf, tflite_result.get('vehicle_type')
+    elif opencv_detected:
+        # Only OpenCV detects
+        return True, opencv_conf, opencv_result.get('vehicle_type')
     else:
+        # Neither detects
         return False, 0.0, None
 
 
@@ -1328,55 +1344,46 @@ def detect_all_spaces(
         if aligned:
             logger.info(f"Image aligned successfully")
 
-    # Run ML detection on full image once to get all vehicle boxes
+    # Run BOTH ML backends on full image to get all vehicle boxes for visualization
     all_vehicle_boxes = []
     h, w = aligned_image.shape[:2]
+    min_confidence = 0.25  # Lower threshold to catch more detections for visualization
+
     try:
-        if _dnn_backend == 'tflite':
-            # TFLite detection
-            boxes, classes, scores = _detect_with_tflite(aligned_image)
-            vehicle_classes = COCO_VEHICLE_CLASSES
-            for box, cls, score in zip(boxes, classes, scores):
-                if cls in vehicle_classes and score > 0.4:
-                    ymin, xmin, ymax, xmax = box
-                    all_vehicle_boxes.append({
-                        'type': vehicle_classes[cls],
-                        'score': float(score),
-                        'box': [float(ymin), float(xmin), float(ymax), float(xmax)],
-                        'box_pixels': [
-                            int(xmin * w), int(ymin * h),
-                            int(xmax * w), int(ymax * h)
-                        ]
-                    })
-        else:
-            # OpenCV DNN detection
-            net = _load_dnn_model()
-            if net is not None:
-                vehicle_classes = VOC_VEHICLE_CLASSES
-                blob = cv2.dnn.blobFromImage(aligned_image, 0.007843, (300, 300), 127.5)
-                net.setInput(blob)
-                detections = net.forward()
+        # Run TFLite detection
+        tflite_boxes, tflite_classes, tflite_scores = _detect_with_tflite(aligned_image)
+        for box, cls, score in zip(tflite_boxes, tflite_classes, tflite_scores):
+            if int(cls) in COCO_VEHICLE_CLASSES and score > min_confidence:
+                ymin, xmin, ymax, xmax = box
+                all_vehicle_boxes.append({
+                    'type': COCO_VEHICLE_CLASSES[int(cls)],
+                    'score': float(score),
+                    'backend': 'tflite',
+                    'box': [float(ymin), float(xmin), float(ymax), float(xmax)],
+                    'box_pixels': [
+                        int(xmin * w), int(ymin * h),
+                        int(xmax * w), int(ymax * h)
+                    ]
+                })
 
-                for i in range(detections.shape[2]):
-                    confidence = detections[0, 0, i, 2]
-                    class_id = int(detections[0, 0, i, 1])
+        # Run OpenCV DNN detection
+        dnn_boxes, dnn_classes, dnn_scores = _detect_with_opencv_dnn(aligned_image)
+        for box, cls, score in zip(dnn_boxes, dnn_classes, dnn_scores):
+            if int(cls) in VOC_VEHICLE_CLASSES and score > min_confidence:
+                ymin, xmin, ymax, xmax = box
+                all_vehicle_boxes.append({
+                    'type': VOC_VEHICLE_CLASSES[int(cls)],
+                    'score': float(score),
+                    'backend': 'opencv_dnn',
+                    'box': [float(ymin), float(xmin), float(ymax), float(xmax)],
+                    'box_pixels': [
+                        int(xmin * w), int(ymin * h),
+                        int(xmax * w), int(ymax * h)
+                    ]
+                })
 
-                    if class_id in vehicle_classes and confidence > 0.4:
-                        x1 = detections[0, 0, i, 3]
-                        y1 = detections[0, 0, i, 4]
-                        x2 = detections[0, 0, i, 5]
-                        y2 = detections[0, 0, i, 6]
-
-                        all_vehicle_boxes.append({
-                            'type': vehicle_classes[class_id],
-                            'score': float(confidence),
-                            'box': [float(y1), float(x1), float(y2), float(x2)],
-                            'box_pixels': [
-                                int(x1 * w), int(y1 * h),
-                                int(x2 * w), int(y2 * h)
-                            ]
-                        })
         global_info['vehicle_boxes'] = all_vehicle_boxes
+        logger.info(f"Global detection found {len(all_vehicle_boxes)} vehicles from both backends")
     except Exception as e:
         logger.error(f"Global detection failed: {e}")
 
@@ -1446,17 +1453,28 @@ def generate_privacy_visualization(
     for y in range(0, h, 50):
         cv2.line(viz, (0, y), (w, y), grid_color, 1)
 
-    # Draw vehicle boxes as red rectangles (privacy-preserving indicator)
+    # Draw vehicle boxes as colored rectangles (privacy-preserving indicator)
+    # Use different colors for different backends
     for vbox in vehicle_boxes:
         x1, y1, x2, y2 = vbox['box_pixels']
-        # Fill with semi-transparent red
+        backend = vbox.get('backend', 'unknown')
+
+        # Color by backend: TFLite=blue, OpenCV DNN=red
+        if backend == 'tflite':
+            fill_color = (180, 0, 0)  # Dark blue
+            border_color = (255, 100, 100)  # Light blue
+        else:
+            fill_color = (0, 0, 180)  # Dark red
+            border_color = (0, 0, 255)  # Bright red
+
+        # Fill with semi-transparent color
         overlay = viz.copy()
-        cv2.rectangle(overlay, (x1, y1), (x2, y2), (0, 0, 180), -1)
+        cv2.rectangle(overlay, (x1, y1), (x2, y2), fill_color, -1)
         cv2.addWeighted(overlay, 0.5, viz, 0.5, 0, viz)
         # Border
-        cv2.rectangle(viz, (x1, y1), (x2, y2), (0, 0, 255), 2)
-        # Label
-        label = f"{vbox['type']}"
+        cv2.rectangle(viz, (x1, y1), (x2, y2), border_color, 2)
+        # Label with type and score
+        label = f"{vbox['type']} {vbox['score']:.0%}"
         cv2.putText(viz, label, (x1 + 5, y1 + 15),
                    cv2.FONT_HERSHEY_SIMPLEX, 0.4, (255, 255, 255), 1)
 
