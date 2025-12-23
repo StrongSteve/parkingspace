@@ -57,8 +57,12 @@ def _get_orb_detector():
     return _orb_detector
 
 
+# Track model download status for debugging
+_model_download_error = None
+
 def _download_dnn_model():
     """Download OpenCV DNN model files if not present."""
+    global _model_download_error
     import urllib.request
     import os
 
@@ -66,35 +70,95 @@ def _download_dnn_model():
     prototxt_path = os.path.join(model_dir, 'MobileNetSSD_deploy.prototxt')
     caffemodel_path = os.path.join(model_dir, 'MobileNetSSD_deploy.caffemodel')
 
-    # Check if both files exist
+    # Check if both files exist and have reasonable size
     if os.path.exists(prototxt_path) and os.path.exists(caffemodel_path):
-        return prototxt_path, caffemodel_path
+        # Verify caffemodel is not empty/corrupted (should be ~23MB)
+        caffemodel_size = os.path.getsize(caffemodel_path)
+        if caffemodel_size > 20_000_000:  # > 20MB
+            logger.info(f"Model files exist: prototxt OK, caffemodel {caffemodel_size / 1024 / 1024:.1f}MB")
+            return prototxt_path, caffemodel_path
+        else:
+            logger.warning(f"Caffemodel too small ({caffemodel_size} bytes), re-downloading...")
+            os.remove(caffemodel_path)
 
-    # Download prototxt (~28KB)
-    prototxt_url = "https://raw.githubusercontent.com/chuanqi305/MobileNet-SSD/master/MobileNetSSD_deploy.prototxt"
-    # Download caffemodel (~23MB) - MobileNet-SSD trained on VOC
-    caffemodel_url = "https://drive.google.com/uc?export=download&id=0B3gersZ2cHIxRm5PMWRoTkdHdHc"
+    # Multiple URLs to try for caffemodel (23MB)
+    # Note: GitHub raw has 100MB limit but can be slow/unreliable for large files
+    caffemodel_urls = [
+        # CHUANGANG GitHub repo (known working)
+        "https://github.com/chuanqi305/MobileNet-SSD/raw/master/MobileNetSSD_deploy.caffemodel",
+        # Direct from djmv repo
+        "https://github.com/djmv/MobilNet_SSD_opencv/raw/master/MobileNetSSD_deploy.caffemodel",
+        # Hugging Face mirror (good CDN)
+        "https://huggingface.co/nickmuchi/mobilenet-ssd/resolve/main/MobileNetSSD_deploy.caffemodel",
+    ]
+
+    prototxt_url = "https://github.com/chuanqi305/MobileNet-SSD/raw/master/MobileNetSSD_deploy.prototxt"
 
     try:
         if not os.path.exists(prototxt_path):
             logger.info("Downloading MobileNet-SSD prototxt...")
             urllib.request.urlretrieve(prototxt_url, prototxt_path)
+            logger.info("Prototxt downloaded successfully")
 
         if not os.path.exists(caffemodel_path):
             logger.info("Downloading MobileNet-SSD caffemodel (~23MB)...")
-            # Use alternative direct link
-            caffemodel_url_alt = "https://github.com/chuanqi305/MobileNet-SSD/raw/master/mobilenet_iter_73000.caffemodel"
-            urllib.request.urlretrieve(caffemodel_url_alt, caffemodel_path)
 
-        logger.info("MobileNet-SSD model downloaded successfully")
+            download_success = False
+            for i, url in enumerate(caffemodel_urls):
+                try:
+                    logger.info(f"Trying URL {i+1}/{len(caffemodel_urls)}: {url[:60]}...")
+                    urllib.request.urlretrieve(url, caffemodel_path)
+
+                    # Verify download size
+                    size = os.path.getsize(caffemodel_path)
+                    if size > 20_000_000:
+                        logger.info(f"Caffemodel downloaded: {size / 1024 / 1024:.1f}MB")
+                        download_success = True
+                        break
+                    else:
+                        logger.warning(f"Downloaded file too small ({size} bytes), trying next URL...")
+                        os.remove(caffemodel_path)
+                except Exception as url_error:
+                    logger.warning(f"URL {i+1} failed: {url_error}")
+                    if os.path.exists(caffemodel_path):
+                        os.remove(caffemodel_path)
+                    continue
+
+            if not download_success:
+                _model_download_error = "All download URLs failed"
+                logger.error("Failed to download caffemodel from any URL")
+                return None, None
+
+        _model_download_error = None
+        logger.info("MobileNet-SSD model ready")
         return prototxt_path, caffemodel_path
+
     except Exception as e:
+        _model_download_error = str(e)
         logger.error(f"Failed to download DNN model: {e}")
         # Clean up partial downloads
         for path in [prototxt_path, caffemodel_path]:
             if os.path.exists(path):
                 os.remove(path)
         return None, None
+
+
+def get_model_status() -> dict:
+    """Get current model status for debugging."""
+    import os
+    model_dir = os.path.dirname(os.path.abspath(__file__))
+    prototxt_path = os.path.join(model_dir, 'MobileNetSSD_deploy.prototxt')
+    caffemodel_path = os.path.join(model_dir, 'MobileNetSSD_deploy.caffemodel')
+
+    return {
+        'prototxt_exists': os.path.exists(prototxt_path),
+        'caffemodel_exists': os.path.exists(caffemodel_path),
+        'caffemodel_size_mb': round(os.path.getsize(caffemodel_path) / 1024 / 1024, 1) if os.path.exists(caffemodel_path) else 0,
+        'download_error': _model_download_error,
+        'dnn_net_loaded': _dnn_net is not None and _dnn_net is not False,
+        'dnn_enabled': _dnn_enabled,
+        'backend': _dnn_backend
+    }
 
 
 def _load_dnn_model():

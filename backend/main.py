@@ -420,7 +420,7 @@ async def get_stats(authorization: Optional[str] = Header(None)):
 
     import psutil
     import platform
-    from detection import _dnn_net, _dnn_enabled, _dnn_backend, _tflite_interpreter, _tflite_available
+    from detection import _dnn_net, _dnn_enabled, _dnn_backend, _tflite_interpreter, _tflite_available, get_model_status
 
     # Get process memory info
     process = psutil.Process()
@@ -436,6 +436,9 @@ async def get_stats(authorization: Optional[str] = Header(None)):
     else:
         model_name = "OpenCV DNN MobileNet-SSD"
         model_loaded = _dnn_net is not None and _dnn_net is not False
+
+    # Get detailed model status for debugging
+    model_status = get_model_status()
 
     # Get uptime
     import time
@@ -453,7 +456,11 @@ async def get_stats(authorization: Optional[str] = Header(None)):
             "backend": _dnn_backend,
             "name": model_name,
             "loaded": model_loaded,
-            "enabled": _dnn_enabled
+            "enabled": _dnn_enabled,
+            "prototxt_exists": model_status.get('prototxt_exists'),
+            "caffemodel_exists": model_status.get('caffemodel_exists'),
+            "caffemodel_size_mb": model_status.get('caffemodel_size_mb'),
+            "download_error": model_status.get('download_error')
         },
         "detection": {
             "pixel_threshold": PIXEL_THRESHOLD,

@@ -1292,6 +1292,23 @@
             <div style="margin-top: 0.5rem; font-size: 0.75rem; color: var(--color-text-muted);">
               Model: ${stats.ml_model.name}
             </div>
+            <div style="margin-top: 0.5rem; display: grid; grid-template-columns: 1fr 1fr; gap: 0.5rem; font-size: 0.75rem;">
+              <div>
+                <span style="color: var(--color-text-muted);">Prototxt:</span>
+                <span style="color: ${stats.ml_model.prototxt_exists ? '#22c55e' : '#ef4444'};">${stats.ml_model.prototxt_exists ? 'OK' : 'Missing'}</span>
+              </div>
+              <div>
+                <span style="color: var(--color-text-muted);">Caffemodel:</span>
+                <span style="color: ${stats.ml_model.caffemodel_exists && stats.ml_model.caffemodel_size_mb > 20 ? '#22c55e' : '#ef4444'};">
+                  ${stats.ml_model.caffemodel_exists ? stats.ml_model.caffemodel_size_mb + ' MB' : 'Missing'}
+                </span>
+              </div>
+            </div>
+            ${stats.ml_model.download_error ? `
+            <div style="margin-top: 0.5rem; padding: 0.5rem; background: rgba(239, 68, 68, 0.1); border-radius: 4px; font-size: 0.75rem; color: #ef4444;">
+              Download Error: ${stats.ml_model.download_error}
+            </div>
+            ` : ''}
           </div>
 
           <!-- Detection Settings -->
