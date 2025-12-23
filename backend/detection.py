@@ -869,10 +869,9 @@ def _analyze_detections_for_space(boxes, classes, scores, vehicle_classes, polyg
     poly_xs = [p[0] for p in polygon]
     poly_ys = [p[1] for p in polygon]
     space_box = [min(poly_ys), min(poly_xs), max(poly_ys), max(poly_xs)]  # [ymin, xmin, ymax, xmax]
+    space_area = (space_box[2] - space_box[0]) * (space_box[3] - space_box[1])
 
-    # Size filter thresholds
-    max_box_area_ratio = 0.25  # Reject boxes covering more than 25% of image
-    min_confidence = 0.20  # Minimum confidence for detection
+    min_confidence = 0.15  # Lower threshold to catch more detections
 
     best_score = 0.0
     best_type = None
@@ -882,19 +881,22 @@ def _analyze_detections_for_space(boxes, classes, scores, vehicle_classes, polyg
 
     for i, (cls, score, box) in enumerate(zip(classes, scores, boxes)):
         if score > min_confidence:
-            # Calculate box area to filter out false positives
             ymin, xmin, ymax, xmax = box
             box_area = (ymax - ymin) * (xmax - xmin)
-
-            # Skip giant boxes (false positives from aerial view)
-            if box_area > max_box_area_ratio:
-                continue
 
             class_name = vehicle_classes.get(int(cls), f'class_{int(cls)}')
             is_vehicle = int(cls) in vehicle_classes
 
             # Box is already normalized [ymin, xmin, ymax, xmax]
             overlap = box_overlap_ratio(space_box, box)
+
+            # For giant boxes, require higher overlap ratio with the space
+            # A real car in the space should have high overlap, not just cover everything
+            min_overlap_required = 0.1
+            if box_area > 0.25:  # Giant box (>25% of image)
+                # For giant boxes, require much higher overlap to consider it valid
+                # This helps filter false positives while keeping true detections
+                min_overlap_required = 0.5
 
             detection_info = {
                 'class': class_name,
@@ -906,11 +908,11 @@ def _analyze_detections_for_space(boxes, classes, scores, vehicle_classes, polyg
 
             if is_vehicle:
                 all_detections.append(detection_info)
-                if overlap > 0.1:
+                if overlap > min_overlap_required:
                     vehicles_in_space.append(detection_info)
 
             # Track best vehicle that overlaps with space
-            if is_vehicle and overlap > 0.1 and score > best_score:
+            if is_vehicle and overlap > min_overlap_required and score > best_score:
                 best_score = float(score)
                 best_type = class_name
                 best_overlap = overlap
