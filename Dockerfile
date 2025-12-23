@@ -5,7 +5,7 @@ FROM python:3.11-slim
 # Set working directory
 WORKDIR /app
 
-# Install system dependencies for OpenCV and TensorFlow
+# Install system dependencies for OpenCV
 RUN apt-get update && apt-get install -y --no-install-recommends \
     libgl1 \
     libglib2.0-0 \
@@ -18,10 +18,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 COPY backend/requirements.txt .
 
 # Install Python dependencies
+# Note: tflite-runtime is lightweight (~2MB), no tensorflow-hub needed
 RUN pip install --no-cache-dir -r requirements.txt
-
-# Install TensorFlow Hub for model loading
-RUN pip install --no-cache-dir tensorflow-hub
 
 # Copy application code
 COPY backend/ .
