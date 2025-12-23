@@ -171,33 +171,40 @@
         }
       }
 
-      // Draw vehicle boxes
+      // Draw vehicle boxes (blue filled rectangles)
       if (vehicleBoxes && vehicleBoxes.length > 0) {
         vehicleBoxes.forEach(vbox => {
           if (!vbox.box) return;
 
-          const [y1, x1, y2, x2] = vbox.box; // normalized coords
+          const [y1, x1, y2, x2] = vbox.box; // normalized coords [ymin, xmin, ymax, xmax]
+
+          // Color by backend: TFLite = blue, OpenCV DNN = purple
+          const isTflite = vbox.backend === 'tflite';
+          const fillColor = isTflite ? '#3b82f6' : '#8b5cf6';  // blue or purple
+          const strokeColor = isTflite ? '#60a5fa' : '#a78bfa';
+
           const rect = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
           rect.setAttribute('x', x1 * 100);
           rect.setAttribute('y', y1 * 56.25);
           rect.setAttribute('width', (x2 - x1) * 100);
           rect.setAttribute('height', (y2 - y1) * 56.25);
-          rect.setAttribute('fill', '#ef4444');
-          rect.setAttribute('fill-opacity', '0.5');
-          rect.setAttribute('stroke', '#ef4444');
-          rect.setAttribute('stroke-width', '0.3');
+          rect.setAttribute('fill', fillColor);
+          rect.setAttribute('fill-opacity', '0.4');
+          rect.setAttribute('stroke', strokeColor);
+          rect.setAttribute('stroke-width', '0.4');
           rect.setAttribute('rx', '0.5');
           svg.appendChild(rect);
 
-          // Add vehicle type label
+          // Add vehicle type label with confidence
           if (vbox.type) {
             const label = document.createElementNS('http://www.w3.org/2000/svg', 'text');
-            label.setAttribute('x', (x1 + (x2 - x1) / 2) * 100);
-            label.setAttribute('y', y1 * 56.25 - 0.5);
-            label.setAttribute('text-anchor', 'middle');
-            label.setAttribute('fill', '#ffaaaa');
+            label.setAttribute('x', x1 * 100 + 1);
+            label.setAttribute('y', y1 * 56.25 + 2.5);
+            label.setAttribute('fill', 'white');
             label.setAttribute('font-size', '2');
-            label.textContent = vbox.type;
+            label.setAttribute('font-weight', 'bold');
+            const confidence = vbox.score ? ` ${(vbox.score * 100).toFixed(0)}%` : '';
+            label.textContent = `${vbox.type}${confidence}`;
             svg.appendChild(label);
           }
         });
