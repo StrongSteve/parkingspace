@@ -261,6 +261,7 @@
         <button class="tab active" data-tab="calibration">Calibration</button>
         <button class="tab" data-tab="monitor">Monitor</button>
         <button class="tab" data-tab="images">Recent Images</button>
+        <button class="tab" data-tab="stats">Server Stats</button>
       </div>
 
       <!-- Calibration Tab -->
@@ -393,6 +394,20 @@
 
           <div class="image-grid" id="imageGrid">
             <p class="text-muted" style="grid-column: 1 / -1;">No images captured yet.</p>
+          </div>
+        </div>
+      </div>
+
+      <!-- Server Stats Tab -->
+      <div class="tab-content hidden" id="tab-stats">
+        <div class="card">
+          <div class="card-header">
+            <span class="card-title">Server Statistics</span>
+            <button class="btn btn-secondary" id="refreshStatsBtn">Refresh</button>
+          </div>
+
+          <div id="statsContent">
+            <p class="text-muted">Loading statistics...</p>
           </div>
         </div>
       </div>
@@ -1206,6 +1221,143 @@
       return new Date(isoString).toLocaleTimeString();
     }
 
+    // Server Stats
+    async function loadServerStats() {
+      const statsContent = document.getElementById('statsContent');
+      statsContent.innerHTML = '<p class="text-muted">Loading statistics...</p>';
+
+      try {
+        const response = await apiCall('/api/stats');
+        if (response.ok) {
+          const data = await response.json();
+          renderServerStats(data);
+        } else {
+          statsContent.innerHTML = '<p class="text-muted">Failed to load statistics.</p>';
+        }
+      } catch (error) {
+        console.error('Failed to load stats:', error);
+        statsContent.innerHTML = '<p class="text-muted">Error loading statistics.</p>';
+      }
+    }
+
+    function renderServerStats(stats) {
+      const statsContent = document.getElementById('statsContent');
+
+      const memoryPercent = Math.round((stats.memory.process_rss_mb / stats.memory.system_total_mb) * 100 * 10) / 10;
+      const memoryBarColor = memoryPercent > 80 ? '#ef4444' : memoryPercent > 60 ? '#f59e0b' : '#22c55e';
+
+      statsContent.innerHTML = `
+        <div style="display: grid; gap: 1rem;">
+          <!-- Memory Section -->
+          <div style="background: var(--color-surface-light); padding: 1rem; border-radius: var(--radius);">
+            <h4 style="margin: 0 0 0.75rem 0; font-size: 0.875rem; color: var(--color-primary);">Memory Usage</h4>
+            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 0.5rem;">
+              <div>
+                <div style="font-size: 0.75rem; color: var(--color-text-muted);">Process RSS</div>
+                <div style="font-size: 1.25rem; font-weight: 600;">${stats.memory.process_rss_mb} MB</div>
+              </div>
+              <div>
+                <div style="font-size: 0.75rem; color: var(--color-text-muted);">System Available</div>
+                <div style="font-size: 1.25rem; font-weight: 600;">${stats.memory.system_available_mb} MB</div>
+              </div>
+            </div>
+            <div style="margin-top: 0.75rem;">
+              <div style="font-size: 0.75rem; color: var(--color-text-muted); margin-bottom: 0.25rem;">
+                System Memory (${stats.memory.system_percent_used}% used)
+              </div>
+              <div style="background: var(--color-border); height: 8px; border-radius: 4px; overflow: hidden;">
+                <div style="background: ${memoryBarColor}; height: 100%; width: ${stats.memory.system_percent_used}%;"></div>
+              </div>
+            </div>
+          </div>
+
+          <!-- ML Model Section -->
+          <div style="background: var(--color-surface-light); padding: 1rem; border-radius: var(--radius);">
+            <h4 style="margin: 0 0 0.75rem 0; font-size: 0.875rem; color: var(--color-primary);">ML Detection</h4>
+            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 0.5rem;">
+              <div>
+                <div style="font-size: 0.75rem; color: var(--color-text-muted);">Backend</div>
+                <div style="font-size: 1rem; font-weight: 600; text-transform: uppercase;">${stats.ml_model.backend}</div>
+              </div>
+              <div>
+                <div style="font-size: 0.75rem; color: var(--color-text-muted);">Status</div>
+                <div style="font-size: 1rem;">
+                  <span style="display: inline-flex; align-items: center; gap: 0.25rem;">
+                    <span style="width: 8px; height: 8px; border-radius: 50%; background: ${stats.ml_model.loaded ? '#22c55e' : stats.ml_model.enabled ? '#f59e0b' : '#ef4444'};"></span>
+                    ${stats.ml_model.loaded ? 'Loaded' : stats.ml_model.enabled ? 'Not loaded yet' : 'Disabled'}
+                  </span>
+                </div>
+              </div>
+            </div>
+            <div style="margin-top: 0.5rem; font-size: 0.75rem; color: var(--color-text-muted);">
+              Model: ${stats.ml_model.name}
+            </div>
+          </div>
+
+          <!-- Detection Settings -->
+          <div style="background: var(--color-surface-light); padding: 1rem; border-radius: var(--radius);">
+            <h4 style="margin: 0 0 0.75rem 0; font-size: 0.875rem; color: var(--color-primary);">Detection Settings</h4>
+            <div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 0.5rem;">
+              <div>
+                <div style="font-size: 0.75rem; color: var(--color-text-muted);">Pixel Threshold</div>
+                <div style="font-size: 1rem; font-weight: 600;">${(stats.detection.pixel_threshold * 100).toFixed(0)}%</div>
+              </div>
+              <div>
+                <div style="font-size: 0.75rem; color: var(--color-text-muted);">DNN Confidence</div>
+                <div style="font-size: 1rem; font-weight: 600;">${(stats.detection.dnn_confidence * 100).toFixed(0)}%</div>
+              </div>
+              <div>
+                <div style="font-size: 0.75rem; color: var(--color-text-muted);">Preload Model</div>
+                <div style="font-size: 1rem; font-weight: 600;">${stats.detection.dnn_preload ? 'Yes' : 'No'}</div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Calibration Status -->
+          <div style="background: var(--color-surface-light); padding: 1rem; border-radius: var(--radius);">
+            <h4 style="margin: 0 0 0.75rem 0; font-size: 0.875rem; color: var(--color-primary);">Calibration Status</h4>
+            <div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 0.5rem;">
+              <div>
+                <div style="font-size: 0.75rem; color: var(--color-text-muted);">Spaces Configured</div>
+                <div style="font-size: 1.25rem; font-weight: 600;">${stats.calibration.spaces_configured}</div>
+              </div>
+              <div>
+                <div style="font-size: 0.75rem; color: var(--color-text-muted);">Reference Features</div>
+                <div style="font-size: 1rem;">
+                  <span style="color: ${stats.calibration.has_reference_features ? 'var(--color-free)' : 'var(--color-text-muted)'};">
+                    ${stats.calibration.has_reference_features ? 'Extracted' : 'None'}
+                  </span>
+                </div>
+              </div>
+              <div>
+                <div style="font-size: 0.75rem; color: var(--color-text-muted);">Recent Images</div>
+                <div style="font-size: 1.25rem; font-weight: 600;">${stats.calibration.recent_images_count}</div>
+              </div>
+            </div>
+          </div>
+
+          <!-- System Info -->
+          <div style="background: var(--color-surface-light); padding: 1rem; border-radius: var(--radius);">
+            <h4 style="margin: 0 0 0.75rem 0; font-size: 0.875rem; color: var(--color-primary);">System Info</h4>
+            <div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 0.5rem;">
+              <div>
+                <div style="font-size: 0.75rem; color: var(--color-text-muted);">Platform</div>
+                <div style="font-size: 1rem; font-weight: 600;">${stats.system.platform}</div>
+              </div>
+              <div>
+                <div style="font-size: 0.75rem; color: var(--color-text-muted);">Python</div>
+                <div style="font-size: 1rem; font-weight: 600;">${stats.system.python_version}</div>
+              </div>
+              <div>
+                <div style="font-size: 0.75rem; color: var(--color-text-muted);">Uptime</div>
+                <div style="font-size: 1rem; font-weight: 600;">${stats.system.uptime_formatted}</div>
+              </div>
+            </div>
+          </div>
+        </div>
+      `;
+    }
+
     // Calibration save/load
     async function saveCalibration() {
       if (!spaces.length) {
@@ -1280,6 +1432,8 @@
         // Load data for specific tabs
         if (tabId === 'images') {
           loadRecentImages();
+        } else if (tabId === 'stats') {
+          loadServerStats();
         }
       });
     });
@@ -1398,6 +1552,8 @@
     });
 
     elements.refreshImagesBtn.addEventListener('click', loadRecentImages);
+
+    document.getElementById('refreshStatsBtn').addEventListener('click', loadServerStats);
 
     elements.modalClose.addEventListener('click', hideModal);
     elements.imageModal.addEventListener('click', (e) => {

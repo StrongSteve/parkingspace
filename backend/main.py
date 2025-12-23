@@ -413,6 +413,67 @@ async def health():
     }
 
 
+@app.get("/api/stats")
+async def get_stats(authorization: Optional[str] = Header(None)):
+    """Get server statistics (admin only)."""
+    require_auth(authorization)
+
+    import psutil
+    import platform
+    from detection import _dnn_net, _dnn_enabled, _dnn_backend, _tflite_interpreter, _tflite_available
+
+    # Get process memory info
+    process = psutil.Process()
+    memory_info = process.memory_info()
+
+    # Get system memory info
+    system_memory = psutil.virtual_memory()
+
+    # Determine ML model status
+    if _dnn_backend == 'tflite':
+        model_name = "TFLite SSD MobileNet V1"
+        model_loaded = _tflite_interpreter is not None and _tflite_interpreter is not False
+    else:
+        model_name = "OpenCV DNN MobileNet-SSD"
+        model_loaded = _dnn_net is not None and _dnn_net is not False
+
+    # Get uptime
+    import time
+    uptime_seconds = time.time() - process.create_time()
+
+    return {
+        "memory": {
+            "process_rss_mb": round(memory_info.rss / 1024 / 1024, 1),
+            "process_vms_mb": round(memory_info.vms / 1024 / 1024, 1),
+            "system_total_mb": round(system_memory.total / 1024 / 1024, 1),
+            "system_available_mb": round(system_memory.available / 1024 / 1024, 1),
+            "system_percent_used": system_memory.percent
+        },
+        "ml_model": {
+            "backend": _dnn_backend,
+            "name": model_name,
+            "loaded": model_loaded,
+            "enabled": _dnn_enabled
+        },
+        "detection": {
+            "pixel_threshold": PIXEL_THRESHOLD,
+            "dnn_confidence": DNN_CONFIDENCE,
+            "dnn_preload": DNN_PRELOAD
+        },
+        "calibration": {
+            "spaces_configured": len(state.spaces),
+            "has_reference_features": state.reference_features is not None,
+            "recent_images_count": len(state.recent_images)
+        },
+        "system": {
+            "platform": platform.system(),
+            "python_version": platform.python_version(),
+            "uptime_seconds": round(uptime_seconds),
+            "uptime_formatted": f"{int(uptime_seconds // 3600)}h {int((uptime_seconds % 3600) // 60)}m"
+        }
+    }
+
+
 # Serve static files
 app.mount("/static", StaticFiles(directory="static"), name="static")
 
