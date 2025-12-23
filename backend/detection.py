@@ -870,6 +870,10 @@ def _analyze_detections_for_space(boxes, classes, scores, vehicle_classes, polyg
     poly_ys = [p[1] for p in polygon]
     space_box = [min(poly_ys), min(poly_xs), max(poly_ys), max(poly_xs)]  # [ymin, xmin, ymax, xmax]
 
+    # Size filter thresholds
+    max_box_area_ratio = 0.25  # Reject boxes covering more than 25% of image
+    min_confidence = 0.20  # Minimum confidence for detection
+
     best_score = 0.0
     best_type = None
     best_overlap = 0.0
@@ -877,7 +881,15 @@ def _analyze_detections_for_space(boxes, classes, scores, vehicle_classes, polyg
     vehicles_in_space = []
 
     for i, (cls, score, box) in enumerate(zip(classes, scores, boxes)):
-        if score > 0.15:  # Lower threshold
+        if score > min_confidence:
+            # Calculate box area to filter out false positives
+            ymin, xmin, ymax, xmax = box
+            box_area = (ymax - ymin) * (xmax - xmin)
+
+            # Skip giant boxes (false positives from aerial view)
+            if box_area > max_box_area_ratio:
+                continue
+
             class_name = vehicle_classes.get(int(cls), f'class_{int(cls)}')
             is_vehicle = int(cls) in vehicle_classes
 
@@ -888,7 +900,8 @@ def _analyze_detections_for_space(boxes, classes, scores, vehicle_classes, polyg
                 'class': class_name,
                 'score': float(score),
                 'box': [float(b) for b in box],
-                'overlap': float(overlap)
+                'overlap': float(overlap),
+                'area': float(box_area)
             }
 
             if is_vehicle:
@@ -1347,13 +1360,29 @@ def detect_all_spaces(
     # Run BOTH ML backends on full image to get all vehicle boxes for visualization
     all_vehicle_boxes = []
     h, w = aligned_image.shape[:2]
-    min_confidence = 0.25  # Lower threshold to catch more detections for visualization
+    min_confidence = 0.35  # Higher threshold to reduce false positives
+    max_box_area_ratio = 0.25  # Reject boxes covering more than 25% of image (false positives)
+
+    def is_valid_detection(box, score):
+        """Filter out invalid detections (too large, too small, low confidence)."""
+        if score < min_confidence:
+            return False
+        ymin, xmin, ymax, xmax = box
+        box_area = (ymax - ymin) * (xmax - xmin)
+        # Reject giant boxes (false positives from aerial view confusion)
+        if box_area > max_box_area_ratio:
+            logger.debug(f"Rejected detection: box area {box_area:.2%} > max {max_box_area_ratio:.0%}")
+            return False
+        # Reject tiny boxes (noise)
+        if box_area < 0.001:  # Less than 0.1% of image
+            return False
+        return True
 
     try:
         # Run TFLite detection
         tflite_boxes, tflite_classes, tflite_scores = _detect_with_tflite(aligned_image)
         for box, cls, score in zip(tflite_boxes, tflite_classes, tflite_scores):
-            if int(cls) in COCO_VEHICLE_CLASSES and score > min_confidence:
+            if int(cls) in COCO_VEHICLE_CLASSES and is_valid_detection(box, score):
                 ymin, xmin, ymax, xmax = box
                 all_vehicle_boxes.append({
                     'type': COCO_VEHICLE_CLASSES[int(cls)],
@@ -1369,7 +1398,7 @@ def detect_all_spaces(
         # Run OpenCV DNN detection
         dnn_boxes, dnn_classes, dnn_scores = _detect_with_opencv_dnn(aligned_image)
         for box, cls, score in zip(dnn_boxes, dnn_classes, dnn_scores):
-            if int(cls) in VOC_VEHICLE_CLASSES and score > min_confidence:
+            if int(cls) in VOC_VEHICLE_CLASSES and is_valid_detection(box, score):
                 ymin, xmin, ymax, xmax = box
                 all_vehicle_boxes.append({
                     'type': VOC_VEHICLE_CLASSES[int(cls)],
