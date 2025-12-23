@@ -1,5 +1,5 @@
 """
-Parking space detection using pixel difference and OpenCV DNN.
+Parking space detection using pixel difference and ML (OpenCV DNN or TFLite).
 Includes image alignment for camera movement compensation.
 """
 
@@ -10,22 +10,36 @@ import io
 import base64
 from typing import List, Dict, Tuple, Optional
 import logging
+import os
 
 logger = logging.getLogger(__name__)
 
-# OpenCV DNN net (lazy loaded) - much lighter than TFLite
+# Detection backend: 'dnn' (OpenCV DNN) or 'tflite' (TensorFlow Lite)
+_dnn_backend = os.getenv('DNN_BACKEND', 'dnn').lower()
+
+# OpenCV DNN net (lazy loaded)
 _dnn_net = None
 _dnn_enabled = True  # Can be disabled for low-memory environments
+
+# TFLite interpreter (lazy loaded)
+_tflite_interpreter = None
+_tflite_available = False
 
 # ORB feature detector (reusable)
 _orb_detector = None
 
-# COCO class names (MobileNet-SSD trained on COCO)
+# VOC class names (MobileNet-SSD trained on VOC for OpenCV DNN)
+VOC_VEHICLE_CLASSES = {7: 'car', 14: 'motorbike', 6: 'bus'}  # VOC class indices
+
+# COCO class names (for TFLite models trained on COCO)
 COCO_CLASSES = {
     0: 'background', 1: 'person', 2: 'bicycle', 3: 'car', 4: 'motorcycle',
     5: 'airplane', 6: 'bus', 7: 'train', 8: 'truck', 9: 'boat'
 }
-VEHICLE_CLASSES = {3: 'car', 4: 'motorcycle', 6: 'bus', 8: 'truck'}
+COCO_VEHICLE_CLASSES = {3: 'car', 4: 'motorcycle', 6: 'bus', 8: 'truck'}
+
+# Use VOC classes for DNN backend, COCO for TFLite
+VEHICLE_CLASSES = VOC_VEHICLE_CLASSES if _dnn_backend == 'dnn' else COCO_VEHICLE_CLASSES
 
 
 def set_dnn_enabled(enabled: bool):
@@ -112,8 +126,129 @@ def preload_dnn_model() -> bool:
 
     Returns True if model loaded successfully, False otherwise.
     """
-    model = _load_dnn_model()
-    return model is not None
+    if _dnn_backend == 'tflite':
+        return _load_tflite_model() is not None
+    else:
+        return _load_dnn_model() is not None
+
+
+# ============================================================================
+# TFLite Backend (alternative to OpenCV DNN)
+# ============================================================================
+
+def _download_tflite_model():
+    """Download TFLite model if not present."""
+    import urllib.request
+
+    model_dir = os.path.dirname(os.path.abspath(__file__))
+    model_path = os.path.join(model_dir, 'ssd_mobilenet_v1.tflite')
+
+    if os.path.exists(model_path):
+        return model_path
+
+    # SSD MobileNet V1 quantized (~4MB) - good balance of size and accuracy
+    model_url = "https://storage.googleapis.com/download.tensorflow.org/models/tflite/coco_ssd_mobilenet_v1_1.0_quant_2018_06_29.zip"
+
+    try:
+        import zipfile
+        import tempfile
+
+        logger.info("Downloading SSD MobileNet V1 TFLite model (~4MB)...")
+        zip_path = os.path.join(tempfile.gettempdir(), 'ssd_mobilenet.zip')
+        urllib.request.urlretrieve(model_url, zip_path)
+
+        with zipfile.ZipFile(zip_path, 'r') as zip_ref:
+            # Extract the .tflite file
+            for name in zip_ref.namelist():
+                if name.endswith('.tflite'):
+                    with zip_ref.open(name) as src, open(model_path, 'wb') as dst:
+                        dst.write(src.read())
+                    break
+
+        os.remove(zip_path)
+        logger.info("TFLite model downloaded successfully")
+        return model_path
+    except Exception as e:
+        logger.error(f"Failed to download TFLite model: {e}")
+        return None
+
+
+def _load_tflite_model():
+    """Lazy load TFLite model."""
+    global _tflite_interpreter, _tflite_available, _dnn_enabled
+
+    if not _dnn_enabled:
+        return None
+
+    if _tflite_interpreter is None:
+        try:
+            # Try to import tflite_runtime first (lighter), fall back to tensorflow
+            try:
+                from tflite_runtime.interpreter import Interpreter
+                logger.info("Using tflite_runtime")
+            except ImportError:
+                try:
+                    from tensorflow.lite.python.interpreter import Interpreter
+                    logger.info("Using tensorflow.lite")
+                except ImportError:
+                    logger.warning("Neither tflite_runtime nor tensorflow available")
+                    _tflite_interpreter = False
+                    _tflite_available = False
+                    return None
+
+            model_path = _download_tflite_model()
+            if model_path is None:
+                _tflite_interpreter = False
+                return None
+
+            logger.info("Loading TFLite model...")
+            _tflite_interpreter = Interpreter(model_path=model_path)
+            _tflite_interpreter.allocate_tensors()
+            _tflite_available = True
+            logger.info("TFLite model loaded successfully (~20MB memory)")
+        except Exception as e:
+            logger.warning(f"Failed to load TFLite model: {e}")
+            _tflite_interpreter = False
+            _tflite_available = False
+
+    return _tflite_interpreter if _tflite_interpreter else None
+
+
+def _detect_with_tflite(image: np.ndarray) -> Tuple[List, List, List]:
+    """Run detection using TFLite model.
+
+    Returns: (boxes, classes, scores) - all as numpy arrays
+    """
+    interpreter = _load_tflite_model()
+    if interpreter is None:
+        return [], [], []
+
+    try:
+        input_details = interpreter.get_input_details()
+        output_details = interpreter.get_output_details()
+
+        # Get input shape
+        input_shape = input_details[0]['shape']
+        height, width = input_shape[1], input_shape[2]
+
+        # Preprocess image
+        img_resized = cv2.resize(image, (width, height))
+        img_rgb = cv2.cvtColor(img_resized, cv2.COLOR_BGR2RGB)
+        input_data = np.expand_dims(img_rgb, axis=0).astype(np.uint8)
+
+        # Run inference
+        interpreter.set_tensor(input_details[0]['index'], input_data)
+        interpreter.invoke()
+
+        # Get outputs
+        boxes = interpreter.get_tensor(output_details[0]['index'])[0]  # [ymin, xmin, ymax, xmax]
+        classes = interpreter.get_tensor(output_details[1]['index'])[0].astype(int)
+        scores = interpreter.get_tensor(output_details[2]['index'])[0]
+
+        return boxes, classes, scores
+    except Exception as e:
+        logger.error(f"TFLite detection error: {e}")
+        return [], [], []
 
 
 def extract_semantic_features(image: np.ndarray) -> Dict:
@@ -560,48 +695,6 @@ def pixel_difference(current: np.ndarray, reference: np.ndarray, debug_info: dic
     return diff_ratio, confidence
 
 
-def analyze_region_color(region: np.ndarray, debug_info: dict = None) -> dict:
-    """Analyze color characteristics of a region to detect vehicles."""
-    # Convert to different color spaces
-    hsv = cv2.cvtColor(region, cv2.COLOR_BGR2HSV)
-    gray = cv2.cvtColor(region, cv2.COLOR_BGR2GRAY)
-
-    # Mask out black (masked) pixels
-    mask = gray > 10
-
-    if not np.any(mask):
-        return {'has_dark_object': False, 'color_variance': 0}
-
-    # Analyze only non-masked pixels
-    gray_values = gray[mask]
-    hsv_values = hsv[mask]
-
-    mean_brightness = np.mean(gray_values)
-    std_brightness = np.std(gray_values)
-
-    # Check for dark objects (vehicles are often darker than pavement)
-    dark_pixels = np.sum(gray_values < 80)
-    dark_ratio = dark_pixels / len(gray_values)
-
-    # Color variance (vehicles have different color than uniform pavement)
-    color_std = np.std(hsv_values[:, 0])  # Hue variance
-    saturation_mean = np.mean(hsv_values[:, 1])
-
-    result = {
-        'mean_brightness': float(mean_brightness),
-        'std_brightness': float(std_brightness),
-        'dark_pixel_ratio': float(dark_ratio),
-        'color_hue_std': float(color_std),
-        'saturation_mean': float(saturation_mean),
-        'has_dark_object': bool(dark_ratio > 0.3 or mean_brightness < 100)
-    }
-
-    if debug_info is not None:
-        debug_info['color_analysis'] = result
-
-    return result
-
-
 def boxes_overlap(box1, box2):
     """Check if two boxes overlap. Boxes are [ymin, xmin, ymax, xmax] normalized."""
     y1_min, x1_min, y1_max, x1_max = box1
@@ -639,19 +732,27 @@ def box_overlap_ratio(box1, box2):
 
 
 def detect_vehicles_tf(image: np.ndarray, polygon: List[List[float]], debug_info: dict = None) -> Tuple[bool, float, Optional[str]]:
-    """Use OpenCV DNN to detect vehicles in the polygon region.
+    """Use ML backend (OpenCV DNN or TFLite) to detect vehicles in the polygon region.
 
     Runs detection on full image and checks if any vehicle overlaps with the parking space.
-    Uses MobileNet-SSD model (~23MB) via OpenCV DNN - much lighter than TFLite.
+    Backend is selected via DNN_BACKEND env var: 'dnn' (default) or 'tflite'.
 
     Returns:
         Tuple of (vehicle_detected, confidence, vehicle_type)
     """
-    net = _load_dnn_model()
-    if net is None:
-        if debug_info is not None:
-            debug_info['tf_status'] = 'model_not_loaded'
-        return False, 0.0, None
+    # Choose backend based on configuration
+    if _dnn_backend == 'tflite':
+        boxes, classes, scores = _detect_with_tflite(image)
+        vehicle_classes = COCO_VEHICLE_CLASSES
+        backend_name = 'tflite'
+    else:
+        net = _load_dnn_model()
+        if net is None:
+            if debug_info is not None:
+                debug_info['dnn_status'] = 'model_not_loaded'
+            return False, 0.0, None
+        vehicle_classes = VOC_VEHICLE_CLASSES
+        backend_name = 'dnn'
 
     try:
         h, w = image.shape[:2]
@@ -662,35 +763,39 @@ def detect_vehicles_tf(image: np.ndarray, polygon: List[List[float]], debug_info
         space_box = [min(poly_ys), min(poly_xs), max(poly_ys), max(poly_xs)]  # [ymin, xmin, ymax, xmax]
 
         if debug_info is not None:
-            debug_info['tf_space_box'] = [float(b) for b in space_box]
+            debug_info['dnn_space_box'] = [float(b) for b in space_box]
+            debug_info['backend'] = backend_name
 
-        # Prepare image for OpenCV DNN (MobileNet-SSD expects 300x300)
-        blob = cv2.dnn.blobFromImage(image, 0.007843, (300, 300), 127.5)
-        net.setInput(blob)
-        detections = net.forward()
+        # Run detection based on backend
+        if _dnn_backend == 'dnn':
+            # OpenCV DNN detection
+            blob = cv2.dnn.blobFromImage(image, 0.007843, (300, 300), 127.5)
+            net.setInput(blob)
+            detections = net.forward()
 
-        # Parse detections - shape is [1, 1, N, 7]
-        # Each detection: [batch_id, class_id, confidence, x1, y1, x2, y2]
-        boxes = []
-        classes = []
-        scores = []
+            # Parse detections - shape is [1, 1, N, 7]
+            # Each detection: [batch_id, class_id, confidence, x1, y1, x2, y2]
+            boxes = []
+            classes = []
+            scores = []
 
-        for i in range(detections.shape[2]):
-            confidence = detections[0, 0, i, 2]
-            if confidence > 0.15:  # Low threshold, filter later
-                class_id = int(detections[0, 0, i, 1])
-                x1 = detections[0, 0, i, 3]
-                y1 = detections[0, 0, i, 4]
-                x2 = detections[0, 0, i, 5]
-                y2 = detections[0, 0, i, 6]
-                # Convert to [ymin, xmin, ymax, xmax] format
-                boxes.append([y1, x1, y2, x2])
-                classes.append(class_id)
-                scores.append(float(confidence))
+            for i in range(detections.shape[2]):
+                confidence = detections[0, 0, i, 2]
+                if confidence > 0.15:  # Low threshold, filter later
+                    class_id = int(detections[0, 0, i, 1])
+                    x1 = detections[0, 0, i, 3]
+                    y1 = detections[0, 0, i, 4]
+                    x2 = detections[0, 0, i, 5]
+                    y2 = detections[0, 0, i, 6]
+                    # Convert to [ymin, xmin, ymax, xmax] format
+                    boxes.append([y1, x1, y2, x2])
+                    classes.append(class_id)
+                    scores.append(float(confidence))
 
-        boxes = np.array(boxes) if boxes else np.array([])
-        classes = np.array(classes) if classes else np.array([])
-        scores = np.array(scores) if scores else np.array([])
+            boxes = np.array(boxes) if boxes else np.array([])
+            classes = np.array(classes) if classes else np.array([])
+            scores = np.array(scores) if scores else np.array([])
+        # else: TFLite detection already done above
 
         best_score = 0.0
         best_type = None
@@ -708,7 +813,7 @@ def detect_vehicles_tf(image: np.ndarray, polygon: List[List[float]], debug_info
         debug_h, debug_w = debug_image.shape[:2]
 
         if debug_info is not None:
-            debug_info['tf_crop_size'] = f"{debug_w}x{debug_h}"
+            debug_info['dnn_crop_size'] = f"{debug_w}x{debug_h}"
 
         # Draw the parking space boundary on debug image
         for i, p in enumerate(polygon):
@@ -721,8 +826,8 @@ def detect_vehicles_tf(image: np.ndarray, polygon: List[List[float]], debug_info
 
         for i, (cls, score, box) in enumerate(zip(classes, scores, boxes)):
             if score > 0.15:  # Lower threshold
-                class_name = VEHICLE_CLASSES.get(cls, f'class_{cls}')
-                is_vehicle = cls in VEHICLE_CLASSES
+                class_name = vehicle_classes.get(cls, f'class_{cls}')
+                is_vehicle = cls in vehicle_classes
 
                 # Box is already normalized [ymin, xmin, ymax, xmax]
                 # Check if this detection overlaps with parking space
@@ -769,11 +874,11 @@ def detect_vehicles_tf(image: np.ndarray, polygon: List[List[float]], debug_info
                     best_overlap = overlap
 
         if debug_info is not None:
-            debug_info['tf_status'] = 'success'
-            debug_info['tf_detections'] = all_detections[:10]
-            debug_info['tf_vehicles_in_space'] = vehicles_in_space
-            debug_info['tf_best_vehicle'] = {'type': best_type, 'score': best_score, 'overlap': best_overlap}
-            debug_info['tf_debug_image'] = encode_image_base64(debug_image)
+            debug_info['dnn_status'] = 'success'
+            debug_info['dnn_detections'] = all_detections[:10]
+            debug_info['dnn_vehicles_in_space'] = vehicles_in_space
+            debug_info['dnn_best_vehicle'] = {'type': best_type, 'score': best_score, 'overlap': best_overlap}
+            debug_info['dnn_debug_image'] = encode_image_base64(debug_image)
 
         # Vehicle detected if good confidence AND overlaps with space
         detected = best_score > 0.2 and best_overlap > 0.1
@@ -782,7 +887,7 @@ def detect_vehicles_tf(image: np.ndarray, polygon: List[List[float]], debug_info
     except Exception as e:
         logger.error(f"DNN detection error: {e}")
         if debug_info is not None:
-            debug_info['tf_status'] = f'error: {str(e)}'
+            debug_info['dnn_status'] = f'error: {str(e)}'
         return False, 0.0, None
 
 
@@ -829,9 +934,6 @@ def detect_space(
     # Extract current region
     current_region = extract_region(current_image, polygon, debug_info)
 
-    # Analyze current region colors
-    color_info = analyze_region_color(current_region, debug_info)
-
     # Pixel difference detection
     pixel_occupied = False
     pixel_confidence = 0.0
@@ -853,58 +955,42 @@ def detect_space(
         debug_info['pixel_status'] = 'no_reference_image'
 
     # DNN detection
-    tf_occupied = False
-    tf_conf = 0.0
+    dnn_occupied = False
+    dnn_conf = 0.0
     vehicle_type = None
 
     # Always run DNN detection for comparison
-    tf_occupied, tf_conf, vehicle_type = detect_vehicles_tf(current_image, polygon, debug_info)
-    debug_info['tf_occupied'] = tf_occupied
-    debug_info['tf_method_result'] = 'occupied' if tf_occupied else 'free'
+    dnn_occupied, dnn_conf, vehicle_type = detect_vehicles_tf(current_image, polygon, debug_info)
+    debug_info['dnn_occupied'] = dnn_occupied
+    debug_info['dnn_method_result'] = 'occupied' if dnn_occupied else 'free'
 
-    # Combine results with improved logic
+    # Combine results: DNN detection takes priority, pixel diff as backup
     debug_info['decision_logic'] = []
 
-    # If we have a reference image, prefer pixel difference
-    if reference_b64 and pixel_confidence > 0:
+    if dnn_conf > dnn_confidence:
+        # DNN has high confidence detection
+        final_status = 'occupied'
+        final_confidence = dnn_conf
+        method = 'dnn'
+        debug_info['decision_logic'].append(f'DNN detected vehicle with {dnn_conf:.2f} confidence')
+    elif reference_b64 and pixel_confidence > 0:
+        # Fall back to pixel difference if we have a reference
         if diff_ratio > pixel_threshold:
             final_status = 'occupied'
             final_confidence = max(pixel_confidence, 0.7)
             method = 'pixel'
             debug_info['decision_logic'].append(f'Pixel diff {diff_ratio:.3f} > threshold {pixel_threshold}')
-        elif tf_conf > dnn_confidence:
-            final_status = 'occupied'
-            final_confidence = tf_conf
-            method = 'dnn'
-            debug_info['decision_logic'].append(f'DNN detected vehicle with {tf_conf:.2f} confidence')
-        elif color_info.get('has_dark_object') and diff_ratio > 0.08:
-            # Fallback: dark object detected with some difference
-            final_status = 'occupied'
-            final_confidence = 0.6
-            method = 'color_analysis'
-            debug_info['decision_logic'].append(f'Dark object detected + diff_ratio {diff_ratio:.3f}')
         else:
             final_status = 'free'
             final_confidence = pixel_confidence
             method = 'pixel'
             debug_info['decision_logic'].append(f'Pixel diff {diff_ratio:.3f} <= threshold {pixel_threshold}')
     else:
-        # No reference - rely on DNN and color analysis
-        if tf_conf > dnn_confidence:
-            final_status = 'occupied'
-            final_confidence = tf_conf
-            method = 'dnn'
-            debug_info['decision_logic'].append(f'DNN detected vehicle (no ref)')
-        elif color_info.get('has_dark_object'):
-            final_status = 'occupied'
-            final_confidence = 0.5
-            method = 'color_analysis'
-            debug_info['decision_logic'].append('Dark object detected (no ref)')
-        else:
-            final_status = 'free'
-            final_confidence = 0.5
-            method = 'inference'
-            debug_info['decision_logic'].append('No vehicle indicators found')
+        # No reference and no DNN detection - assume free
+        final_status = 'free'
+        final_confidence = 0.5
+        method = 'inference'
+        debug_info['decision_logic'].append('No vehicle indicators found')
 
     debug_info['final_decision'] = {
         'status': final_status,
@@ -960,42 +1046,57 @@ def detect_all_spaces(
         if aligned:
             logger.info(f"Image aligned successfully")
 
-    # Run OpenCV DNN detection on full image once to get all vehicle boxes
+    # Run ML detection on full image once to get all vehicle boxes
     all_vehicle_boxes = []
+    h, w = aligned_image.shape[:2]
     try:
-        net = _load_dnn_model()
-        if net is not None:
-            h, w = aligned_image.shape[:2]
-
-            # Prepare image for OpenCV DNN (MobileNet-SSD expects 300x300)
-            blob = cv2.dnn.blobFromImage(aligned_image, 0.007843, (300, 300), 127.5)
-            net.setInput(blob)
-            detections = net.forward()
-
-            # Parse detections
-            for i in range(detections.shape[2]):
-                confidence = detections[0, 0, i, 2]
-                class_id = int(detections[0, 0, i, 1])
-
-                # Higher threshold (0.4) to reduce false positives
-                if class_id in VEHICLE_CLASSES and confidence > 0.4:
-                    x1 = detections[0, 0, i, 3]
-                    y1 = detections[0, 0, i, 4]
-                    x2 = detections[0, 0, i, 5]
-                    y2 = detections[0, 0, i, 6]
-
+        if _dnn_backend == 'tflite':
+            # TFLite detection
+            boxes, classes, scores = _detect_with_tflite(aligned_image)
+            vehicle_classes = COCO_VEHICLE_CLASSES
+            for box, cls, score in zip(boxes, classes, scores):
+                if cls in vehicle_classes and score > 0.4:
+                    ymin, xmin, ymax, xmax = box
                     all_vehicle_boxes.append({
-                        'type': VEHICLE_CLASSES[class_id],
-                        'score': float(confidence),
-                        'box': [float(y1), float(x1), float(y2), float(x2)],
+                        'type': vehicle_classes[cls],
+                        'score': float(score),
+                        'box': [float(ymin), float(xmin), float(ymax), float(xmax)],
                         'box_pixels': [
-                            int(x1 * w), int(y1 * h),
-                            int(x2 * w), int(y2 * h)
+                            int(xmin * w), int(ymin * h),
+                            int(xmax * w), int(ymax * h)
                         ]
                     })
-            global_info['vehicle_boxes'] = all_vehicle_boxes
+        else:
+            # OpenCV DNN detection
+            net = _load_dnn_model()
+            if net is not None:
+                vehicle_classes = VOC_VEHICLE_CLASSES
+                blob = cv2.dnn.blobFromImage(aligned_image, 0.007843, (300, 300), 127.5)
+                net.setInput(blob)
+                detections = net.forward()
+
+                for i in range(detections.shape[2]):
+                    confidence = detections[0, 0, i, 2]
+                    class_id = int(detections[0, 0, i, 1])
+
+                    if class_id in vehicle_classes and confidence > 0.4:
+                        x1 = detections[0, 0, i, 3]
+                        y1 = detections[0, 0, i, 4]
+                        x2 = detections[0, 0, i, 5]
+                        y2 = detections[0, 0, i, 6]
+
+                        all_vehicle_boxes.append({
+                            'type': vehicle_classes[class_id],
+                            'score': float(confidence),
+                            'box': [float(y1), float(x1), float(y2), float(x2)],
+                            'box_pixels': [
+                                int(x1 * w), int(y1 * h),
+                                int(x2 * w), int(y2 * h)
+                            ]
+                        })
+        global_info['vehicle_boxes'] = all_vehicle_boxes
     except Exception as e:
-        logger.error(f"Global DNN detection failed: {e}")
+        logger.error(f"Global detection failed: {e}")
 
     for space in spaces:
         result = detect_space(aligned_image, space, pixel_threshold, dnn_confidence)

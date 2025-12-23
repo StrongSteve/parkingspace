@@ -16,3 +16,5 @@ services:
         value: "true"  # OpenCV DNN uses ~30MB RAM
       - key: DNN_PRELOAD
         value: "false"
+      - key: DNN_BACKEND
+        value: "dnn"  # 'dnn' (OpenCV DNN, default) or 'tflite' (TensorFlow Lite)

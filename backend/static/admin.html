@@ -1052,70 +1052,50 @@
           </div>`;
         }
 
-        // Color Analysis
-        if (debug.color_analysis) {
-          const ca = debug.color_analysis;
-          html += `<div class="debug-subsection">
-            <div class="debug-subsection-title">Color Analysis</div>`;
-          html += `<div class="debug-row">
-            <span class="debug-label">Mean Brightness:</span>
-            <span class="debug-value">${ca.mean_brightness.toFixed(1)}</span>
-          </div>`;
-          html += `<div class="debug-row">
-            <span class="debug-label">Dark Pixel Ratio:</span>
-            <span class="debug-value">${(ca.dark_pixel_ratio * 100).toFixed(1)}%</span>
-          </div>`;
-          html += `<div class="debug-row">
-            <span class="debug-label">Has Dark Object:</span>
-            <span class="debug-value ${ca.has_dark_object ? 'error' : 'success'}">${ca.has_dark_object ? 'Yes' : 'No'}</span>
-          </div>`;
-          html += `</div>`;
-        }
-
-        // TensorFlow
+        // DNN Detection
         html += `<div class="debug-subsection">
-          <div class="debug-subsection-title">TensorFlow Detection</div>`;
-        if (debug.tf_status === 'success') {
+          <div class="debug-subsection-title">DNN Detection</div>`;
+        if (debug.dnn_status === 'success') {
           html += `<div class="debug-row">
-            <span class="debug-label">TF Status:</span>
+            <span class="debug-label">DNN Status:</span>
             <span class="debug-value success">Loaded & Running</span>
           </div>`;
-          if (debug.tf_crop_size) {
+          if (debug.dnn_crop_size) {
             html += `<div class="debug-row">
-              <span class="debug-label">TF Crop Size:</span>
-              <span class="debug-value">${debug.tf_crop_size}</span>
+              <span class="debug-label">DNN Crop Size:</span>
+              <span class="debug-value">${debug.dnn_crop_size}</span>
             </div>`;
           }
-          if (debug.tf_best_vehicle) {
-            const tfResult = debug.tf_best_vehicle;
+          if (debug.dnn_best_vehicle) {
+            const dnnResult = debug.dnn_best_vehicle;
             html += `<div class="debug-row">
               <span class="debug-label">Best Vehicle Detection:</span>
-              <span class="debug-value">${tfResult.type || 'none'} (${(tfResult.score * 100).toFixed(1)}%)</span>
+              <span class="debug-value">${dnnResult.type || 'none'} (${(dnnResult.score * 100).toFixed(1)}%)</span>
             </div>`;
           }
-          if (debug.tf_detections && debug.tf_detections.length > 0) {
+          if (debug.dnn_detections && debug.dnn_detections.length > 0) {
             html += `<div class="debug-row">
               <span class="debug-label">All Detections:</span>
-              <span class="debug-value">${debug.tf_detections.map(d => `${d.class}: ${(d.score * 100).toFixed(0)}%`).join(', ')}</span>
+              <span class="debug-value">${debug.dnn_detections.map(d => `${d.class}: ${(d.score * 100).toFixed(0)}%`).join(', ')}</span>
             </div>`;
           }
-          if (debug.tf_method_result) {
+          if (debug.dnn_method_result) {
             html += `<div class="debug-row">
-              <span class="debug-label">TF Method Result:</span>
-              <span class="debug-value ${debug.tf_method_result === 'occupied' ? 'error' : 'success'}">${debug.tf_method_result}</span>
+              <span class="debug-label">DNN Method Result:</span>
+              <span class="debug-value ${debug.dnn_method_result === 'occupied' ? 'error' : 'success'}">${debug.dnn_method_result}</span>
             </div>`;
           }
-          // Show TF debug image with detections
-          if (debug.tf_debug_image) {
+          // Show DNN debug image with detections
+          if (debug.dnn_debug_image) {
             html += `<div class="debug-row" style="flex-direction: column; align-items: flex-start;">
-              <span class="debug-label" style="margin-bottom: 0.5rem;">TF Detection Visual:</span>
-              <img src="${debug.tf_debug_image}" alt="TF Detections" style="max-width: 100%; border-radius: 4px; border: 1px solid var(--color-border);">
+              <span class="debug-label" style="margin-bottom: 0.5rem;">DNN Detection Visual:</span>
+              <img src="${debug.dnn_debug_image}" alt="DNN Detections" style="max-width: 100%; border-radius: 4px; border: 1px solid var(--color-border);">
             </div>`;
           }
         } else {
           html += `<div class="debug-row">
-            <span class="debug-label">TF Status:</span>
-            <span class="debug-value error">${debug.tf_status || 'not available'}</span>
+            <span class="debug-label">DNN Status:</span>
+            <span class="debug-value error">${debug.dnn_status || 'not available'}</span>
           </div>`;
         }
         html += `</div>`;
