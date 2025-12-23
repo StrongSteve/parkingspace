@@ -13,8 +13,6 @@ services:
       - key: DNN_CONFIDENCE
         value: 0.5
       - key: DNN_ENABLED
-        value: "true"  # OpenCV DNN uses ~30MB RAM
+        value: "true"
       - key: DNN_PRELOAD
-        value: "false"
-      - key: DNN_BACKEND
-        value: "dnn"  # 'dnn' (OpenCV DNN, default) or 'tflite' (TensorFlow Lite)
+        value: "true"  # Preload both OpenCV DNN and TFLite models at startup

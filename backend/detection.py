@@ -82,17 +82,15 @@ def _download_dnn_model():
             os.remove(caffemodel_path)
 
     # Multiple URLs to try for caffemodel (23MB)
-    # Note: GitHub raw has 100MB limit but can be slow/unreliable for large files
+    # PINTO0309 repo is verified working as of Dec 2025
     caffemodel_urls = [
-        # CHUANGANG GitHub repo (known working)
-        "https://github.com/chuanqi305/MobileNet-SSD/raw/master/MobileNetSSD_deploy.caffemodel",
-        # Direct from djmv repo
-        "https://github.com/djmv/MobilNet_SSD_opencv/raw/master/MobileNetSSD_deploy.caffemodel",
-        # Hugging Face mirror (good CDN)
-        "https://huggingface.co/nickmuchi/mobilenet-ssd/resolve/main/MobileNetSSD_deploy.caffemodel",
+        # PINTO0309 repo (verified working, 23MB)
+        "https://raw.githubusercontent.com/PINTO0309/MobileNet-SSD-RealSense/master/caffemodel/MobileNetSSD/MobileNetSSD_deploy.caffemodel",
+        # Alternative: opencv_extra testdata (may have size limits)
+        "https://raw.githubusercontent.com/opencv/opencv_extra/master/testdata/dnn/MobileNetSSD_deploy.caffemodel",
     ]
 
-    prototxt_url = "https://github.com/chuanqi305/MobileNet-SSD/raw/master/MobileNetSSD_deploy.prototxt"
+    prototxt_url = "https://raw.githubusercontent.com/PINTO0309/MobileNet-SSD-RealSense/master/caffemodel/MobileNetSSD/MobileNetSSD_deploy.prototxt"
 
     try:
         if not os.path.exists(prototxt_path):

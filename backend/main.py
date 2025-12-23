@@ -129,23 +129,38 @@ async def lifespan(app: FastAPI):
     # Configure OpenCV DNN detection
     set_dnn_enabled(DNN_ENABLED)
 
-    # Optionally preload DNN model in background (disabled by default for low-memory environments)
-    if DNN_ENABLED and DNN_PRELOAD:
+    # Preload both ML models in background thread
+    if DNN_PRELOAD:
         import threading
-        def load_model():
-            logger.info("Preloading OpenCV DNN model...")
-            success = preload_dnn_model()
-            if success:
-                logger.info("OpenCV DNN model ready!")
-            else:
-                logger.warning("OpenCV DNN model failed to load")
+        from detection import _load_dnn_model, _load_tflite_model
 
-        thread = threading.Thread(target=load_model, daemon=True)
+        def load_models():
+            # Load OpenCV DNN model
+            logger.info("Preloading OpenCV DNN model...")
+            try:
+                dnn_net = _load_dnn_model()
+                if dnn_net:
+                    logger.info("OpenCV DNN model loaded successfully!")
+                else:
+                    logger.warning("OpenCV DNN model failed to load")
+            except Exception as e:
+                logger.error(f"OpenCV DNN load error: {e}")
+
+            # Load TFLite model
+            logger.info("Preloading TFLite model...")
+            try:
+                tflite = _load_tflite_model()
+                if tflite:
+                    logger.info("TFLite model loaded successfully!")
+                else:
+                    logger.warning("TFLite model failed to load (may not be installed)")
+            except Exception as e:
+                logger.error(f"TFLite load error: {e}")
+
+        thread = threading.Thread(target=load_models, daemon=True)
         thread.start()
-    elif DNN_ENABLED:
-        logger.info("DNN enabled but will load on first detection (saves memory)")
     else:
-        logger.info("DNN detection disabled - using pixel diff only")
+        logger.info("Model preloading disabled - models will load on first detection")
 
     yield
     # Shutdown
