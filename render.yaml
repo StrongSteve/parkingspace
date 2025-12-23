@@ -10,9 +10,9 @@ services:
         value: 8000
       - key: PIXEL_THRESHOLD
         value: 0.15
-      - key: TF_CONFIDENCE
+      - key: DNN_CONFIDENCE
         value: 0.5
-      - key: TF_ENABLED
-        value: "true"  # OpenCV DNN uses ~30MB RAM (much lighter than TFLite)
-      - key: TF_PRELOAD
+      - key: DNN_ENABLED
+        value: "true"  # OpenCV DNN uses ~30MB RAM
+      - key: DNN_PRELOAD
         value: "false"

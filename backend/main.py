@@ -19,7 +19,7 @@ from pydantic import BaseModel
 from detection import (
     detect_all_spaces, encode_image_base64, decode_base64_image,
     extract_reference_features, generate_privacy_visualization,
-    preload_tf_model, set_tf_enabled
+    preload_dnn_model, set_dnn_enabled
 )
 
 # Configure logging
@@ -31,9 +31,9 @@ logger = logging.getLogger(__name__)
 
 # Configuration
 PIXEL_THRESHOLD = float(os.getenv('PIXEL_THRESHOLD', '0.15'))
-TF_CONFIDENCE = float(os.getenv('TF_CONFIDENCE', '0.5'))
-TF_ENABLED = os.getenv('TF_ENABLED', 'true').lower() in ('true', '1', 'yes')
-TF_PRELOAD = os.getenv('TF_PRELOAD', 'true').lower() in ('true', '1', 'yes')
+DNN_CONFIDENCE = float(os.getenv('DNN_CONFIDENCE', '0.5'))
+DNN_ENABLED = os.getenv('DNN_ENABLED', 'true').lower() in ('true', '1', 'yes')
+DNN_PRELOAD = os.getenv('DNN_PRELOAD', 'true').lower() in ('true', '1', 'yes')
 MAX_RECENT_IMAGES = 5
 CALIBRATION_FILE = Path(__file__).parent / 'calibration.json'
 
@@ -123,29 +123,29 @@ async def lifespan(app: FastAPI):
     logger.info("=" * 50)
     logger.info(f"ADMIN PASSWORD: {state.admin_password}")
     logger.info("=" * 50)
-    logger.info(f"TF_ENABLED: {TF_ENABLED}, TF_PRELOAD: {TF_PRELOAD}")
+    logger.info(f"DNN_ENABLED: {DNN_ENABLED}, DNN_PRELOAD: {DNN_PRELOAD}")
     logger.info("=" * 50)
 
-    # Configure TensorFlow detection
-    set_tf_enabled(TF_ENABLED)
+    # Configure OpenCV DNN detection
+    set_dnn_enabled(DNN_ENABLED)
 
-    # Optionally preload TensorFlow model in background (disabled by default for low-memory environments)
-    if TF_ENABLED and TF_PRELOAD:
+    # Optionally preload DNN model in background (disabled by default for low-memory environments)
+    if DNN_ENABLED and DNN_PRELOAD:
         import threading
         def load_model():
-            logger.info("Preloading TensorFlow model...")
-            success = preload_tf_model()
+            logger.info("Preloading OpenCV DNN model...")
+            success = preload_dnn_model()
             if success:
-                logger.info("TensorFlow model ready!")
+                logger.info("OpenCV DNN model ready!")
             else:
-                logger.warning("TensorFlow model failed to load")
+                logger.warning("OpenCV DNN model failed to load")
 
         thread = threading.Thread(target=load_model, daemon=True)
         thread.start()
-    elif TF_ENABLED:
-        logger.info("TensorFlow enabled but will load on first detection (saves memory)")
+    elif DNN_ENABLED:
+        logger.info("DNN enabled but will load on first detection (saves memory)")
     else:
-        logger.info("TensorFlow detection disabled - using pixel diff only")
+        logger.info("DNN detection disabled - using pixel diff only")
 
     yield
     # Shutdown
@@ -269,7 +269,7 @@ async def upload_image(req: UploadRequest, authorization: Optional[str] = Header
             req.image,
             state.spaces,
             pixel_threshold=PIXEL_THRESHOLD,
-            tf_confidence=TF_CONFIDENCE,
+            dnn_confidence=DNN_CONFIDENCE,
             reference_features=state.reference_features
         )
 

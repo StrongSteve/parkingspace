@@ -1,5 +1,5 @@
 """
-Parking space detection using pixel difference and TensorFlow.
+Parking space detection using pixel difference and OpenCV DNN.
 Includes image alignment for camera movement compensation.
 """
 
@@ -28,7 +28,7 @@ COCO_CLASSES = {
 VEHICLE_CLASSES = {3: 'car', 4: 'motorcycle', 6: 'bus', 8: 'truck'}
 
 
-def set_tf_enabled(enabled: bool):
+def set_dnn_enabled(enabled: bool):
     """Enable or disable DNN detection globally."""
     global _dnn_enabled
     _dnn_enabled = enabled
@@ -107,7 +107,7 @@ def _load_dnn_model():
     return _dnn_net if _dnn_net else None
 
 
-def preload_tf_model() -> bool:
+def preload_dnn_model() -> bool:
     """Preload DNN model at startup.
 
     Returns True if model loaded successfully, False otherwise.
@@ -790,7 +790,7 @@ def detect_space(
     current_image: np.ndarray,
     space: Dict,
     pixel_threshold: float = 0.15,
-    tf_confidence: float = 0.5
+    dnn_confidence: float = 0.5
 ) -> Dict:
     """Detect if a parking space is occupied.
 
@@ -798,7 +798,7 @@ def detect_space(
         current_image: Current camera frame (BGR)
         space: Space definition with polygon and optional reference_image
         pixel_threshold: Threshold for pixel difference (0-1)
-        tf_confidence: Minimum confidence for TensorFlow detection
+        dnn_confidence: Minimum confidence for DNN detection
 
     Returns:
         Detection result dict with debug info
@@ -810,7 +810,7 @@ def detect_space(
     debug_info = {
         'space_id': space_id,
         'pixel_threshold': pixel_threshold,
-        'tf_confidence_threshold': tf_confidence,
+        'dnn_confidence_threshold': dnn_confidence,
         'has_reference': bool(space.get('reference_image')),
         'polygon_points': len(polygon)
     }
@@ -852,12 +852,12 @@ def detect_space(
     else:
         debug_info['pixel_status'] = 'no_reference_image'
 
-    # TensorFlow detection
+    # DNN detection
     tf_occupied = False
     tf_conf = 0.0
     vehicle_type = None
 
-    # Always run TF detection for comparison
+    # Always run DNN detection for comparison
     tf_occupied, tf_conf, vehicle_type = detect_vehicles_tf(current_image, polygon, debug_info)
     debug_info['tf_occupied'] = tf_occupied
     debug_info['tf_method_result'] = 'occupied' if tf_occupied else 'free'
@@ -872,11 +872,11 @@ def detect_space(
             final_confidence = max(pixel_confidence, 0.7)
             method = 'pixel'
             debug_info['decision_logic'].append(f'Pixel diff {diff_ratio:.3f} > threshold {pixel_threshold}')
-        elif tf_conf > tf_confidence:
+        elif tf_conf > dnn_confidence:
             final_status = 'occupied'
             final_confidence = tf_conf
-            method = 'tensorflow'
-            debug_info['decision_logic'].append(f'TF detected vehicle with {tf_conf:.2f} confidence')
+            method = 'dnn'
+            debug_info['decision_logic'].append(f'DNN detected vehicle with {tf_conf:.2f} confidence')
         elif color_info.get('has_dark_object') and diff_ratio > 0.08:
             # Fallback: dark object detected with some difference
             final_status = 'occupied'
@@ -889,12 +889,12 @@ def detect_space(
             method = 'pixel'
             debug_info['decision_logic'].append(f'Pixel diff {diff_ratio:.3f} <= threshold {pixel_threshold}')
     else:
-        # No reference - rely on TF and color analysis
-        if tf_conf > tf_confidence:
+        # No reference - rely on DNN and color analysis
+        if tf_conf > dnn_confidence:
             final_status = 'occupied'
             final_confidence = tf_conf
-            method = 'tensorflow'
-            debug_info['decision_logic'].append(f'TF detected vehicle (no ref)')
+            method = 'dnn'
+            debug_info['decision_logic'].append(f'DNN detected vehicle (no ref)')
         elif color_info.get('has_dark_object'):
             final_status = 'occupied'
             final_confidence = 0.5
@@ -926,7 +926,7 @@ def detect_all_spaces(
     image_base64: str,
     spaces: List[Dict],
     pixel_threshold: float = 0.15,
-    tf_confidence: float = 0.5,
+    dnn_confidence: float = 0.5,
     reference_features: Dict = None
 ) -> Tuple[List[Dict], np.ndarray, Dict]:
     """Detect status of all parking spaces.
@@ -935,7 +935,7 @@ def detect_all_spaces(
         image_base64: Base64 encoded image
         spaces: List of space definitions
         pixel_threshold: Threshold for pixel difference
-        tf_confidence: Minimum TF confidence
+        dnn_confidence: Minimum DNN confidence
         reference_features: Optional reference features for image alignment
 
     Returns:
@@ -998,7 +998,7 @@ def detect_all_spaces(
         logger.error(f"Global DNN detection failed: {e}")
 
     for space in spaces:
-        result = detect_space(aligned_image, space, pixel_threshold, tf_confidence)
+        result = detect_space(aligned_image, space, pixel_threshold, dnn_confidence)
         results.append(result)
 
         # Log result
