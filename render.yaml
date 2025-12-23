@@ -13,6 +13,6 @@ services:
       - key: TF_CONFIDENCE
         value: 0.5
       - key: TF_ENABLED
-        value: "true"
+        value: "false"  # Disabled on free tier due to 512MB RAM limit
       - key: TF_PRELOAD
-        value: "true"
+        value: "false"
