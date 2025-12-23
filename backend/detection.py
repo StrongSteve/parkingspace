@@ -13,23 +13,26 @@ import logging
 
 logger = logging.getLogger(__name__)
 
-# TensorFlow Lite interpreter (lazy loaded) - much lower memory than full TF
-_tflite_interpreter = None
-_tflite_enabled = True  # Can be disabled for low-memory environments
-_tflite_model_path = None
+# OpenCV DNN net (lazy loaded) - much lighter than TFLite
+_dnn_net = None
+_dnn_enabled = True  # Can be disabled for low-memory environments
 
 # ORB feature detector (reusable)
 _orb_detector = None
 
-# COCO class names for vehicle detection
-COCO_VEHICLE_CLASSES = {1: 'person', 3: 'car', 4: 'motorcycle', 6: 'bus', 8: 'truck', 2: 'bicycle'}
+# COCO class names (MobileNet-SSD trained on COCO)
+COCO_CLASSES = {
+    0: 'background', 1: 'person', 2: 'bicycle', 3: 'car', 4: 'motorcycle',
+    5: 'airplane', 6: 'bus', 7: 'train', 8: 'truck', 9: 'boat'
+}
+VEHICLE_CLASSES = {3: 'car', 4: 'motorcycle', 6: 'bus', 8: 'truck'}
 
 
 def set_tf_enabled(enabled: bool):
-    """Enable or disable TensorFlow Lite detection globally."""
-    global _tflite_enabled
-    _tflite_enabled = enabled
-    logger.info(f"TensorFlow Lite detection {'enabled' if enabled else 'disabled'}")
+    """Enable or disable DNN detection globally."""
+    global _dnn_enabled
+    _dnn_enabled = enabled
+    logger.info(f"OpenCV DNN detection {'enabled' if enabled else 'disabled'}")
 
 
 def _get_orb_detector():
@@ -40,87 +43,76 @@ def _get_orb_detector():
     return _orb_detector
 
 
-def _download_tflite_model():
-    """Download TFLite model if not present."""
+def _download_dnn_model():
+    """Download OpenCV DNN model files if not present."""
     import urllib.request
     import os
 
     model_dir = os.path.dirname(os.path.abspath(__file__))
-    model_path = os.path.join(model_dir, 'ssd_mobilenet_v1.tflite')
+    prototxt_path = os.path.join(model_dir, 'MobileNetSSD_deploy.prototxt')
+    caffemodel_path = os.path.join(model_dir, 'MobileNetSSD_deploy.caffemodel')
 
-    if os.path.exists(model_path):
-        return model_path
+    # Check if both files exist
+    if os.path.exists(prototxt_path) and os.path.exists(caffemodel_path):
+        return prototxt_path, caffemodel_path
 
-    # Use SSD MobileNet V1 quantized - smallest model (~4MB, ~20-30MB RAM)
-    # Much smaller than EfficientDet-Lite0 which uses ~100MB+ RAM
-    model_url = "https://storage.googleapis.com/download.tensorflow.org/models/tflite/coco_ssd_mobilenet_v1_1.0_quant_2018_06_29.zip"
+    # Download prototxt (~28KB)
+    prototxt_url = "https://raw.githubusercontent.com/chuanqi305/MobileNet-SSD/master/MobileNetSSD_deploy.prototxt"
+    # Download caffemodel (~23MB) - MobileNet-SSD trained on VOC
+    caffemodel_url = "https://drive.google.com/uc?export=download&id=0B3gersZ2cHIxRm5PMWRoTkdHdHc"
 
-    logger.info(f"Downloading TFLite model...")
     try:
-        import zipfile
-        import tempfile
+        if not os.path.exists(prototxt_path):
+            logger.info("Downloading MobileNet-SSD prototxt...")
+            urllib.request.urlretrieve(prototxt_url, prototxt_path)
 
-        # Download zip file
-        zip_path = os.path.join(tempfile.gettempdir(), 'model.zip')
-        urllib.request.urlretrieve(model_url, zip_path)
+        if not os.path.exists(caffemodel_path):
+            logger.info("Downloading MobileNet-SSD caffemodel (~23MB)...")
+            # Use alternative direct link
+            caffemodel_url_alt = "https://github.com/chuanqi305/MobileNet-SSD/raw/master/mobilenet_iter_73000.caffemodel"
+            urllib.request.urlretrieve(caffemodel_url_alt, caffemodel_path)
 
-        # Extract the tflite file
-        with zipfile.ZipFile(zip_path, 'r') as zip_ref:
-            for name in zip_ref.namelist():
-                if name.endswith('.tflite'):
-                    with zip_ref.open(name) as src, open(model_path, 'wb') as dst:
-                        dst.write(src.read())
-                    break
-
-        os.remove(zip_path)
-        logger.info(f"TFLite model downloaded to {model_path}")
-        return model_path
+        logger.info("MobileNet-SSD model downloaded successfully")
+        return prototxt_path, caffemodel_path
     except Exception as e:
-        logger.error(f"Failed to download TFLite model: {e}")
+        logger.error(f"Failed to download DNN model: {e}")
+        # Clean up partial downloads
+        for path in [prototxt_path, caffemodel_path]:
+            if os.path.exists(path):
+                os.remove(path)
+        return None, None
+
+
+def _load_dnn_model():
+    """Lazy load OpenCV DNN model (MobileNet-SSD, ~23MB, low memory)."""
+    global _dnn_net, _dnn_enabled
+
+    if not _dnn_enabled:
         return None
 
-
-def _load_tf_model():
-    """Lazy load TensorFlow Lite interpreter (much lower memory than full TF)."""
-    global _tflite_interpreter, _tflite_enabled, _tflite_model_path
-
-    # Check if TF is disabled
-    if not _tflite_enabled:
-        return None
-
-    if _tflite_interpreter is None:
+    if _dnn_net is None:
         try:
-            # Try to use tflite-runtime first (smaller), fall back to full tensorflow
-            try:
-                from tflite_runtime.interpreter import Interpreter
-                logger.info("Using tflite-runtime (lightweight)")
-            except ImportError:
-                from tensorflow.lite.python.interpreter import Interpreter
-                logger.info("Using tensorflow.lite interpreter")
-
-            # Download model if needed
-            _tflite_model_path = _download_tflite_model()
-            if _tflite_model_path is None:
-                _tflite_interpreter = False
+            prototxt_path, caffemodel_path = _download_dnn_model()
+            if prototxt_path is None:
+                _dnn_net = False
                 return None
 
-            logger.info("Loading TFLite model...")
-            _tflite_interpreter = Interpreter(model_path=_tflite_model_path)
-            _tflite_interpreter.allocate_tensors()
-            logger.info("TFLite model loaded successfully (~50MB memory)")
+            logger.info("Loading OpenCV DNN model...")
+            _dnn_net = cv2.dnn.readNetFromCaffe(prototxt_path, caffemodel_path)
+            logger.info("OpenCV DNN model loaded successfully (~30MB memory)")
         except Exception as e:
-            logger.warning(f"Failed to load TFLite model: {e}")
-            _tflite_interpreter = False  # Mark as failed, don't retry
+            logger.warning(f"Failed to load DNN model: {e}")
+            _dnn_net = False
 
-    return _tflite_interpreter if _tflite_interpreter else None
+    return _dnn_net if _dnn_net else None
 
 
 def preload_tf_model() -> bool:
-    """Preload TensorFlow Lite model at startup.
+    """Preload DNN model at startup.
 
     Returns True if model loaded successfully, False otherwise.
     """
-    model = _load_tf_model()
+    model = _load_dnn_model()
     return model is not None
 
 
@@ -647,16 +639,16 @@ def box_overlap_ratio(box1, box2):
 
 
 def detect_vehicles_tf(image: np.ndarray, polygon: List[List[float]], debug_info: dict = None) -> Tuple[bool, float, Optional[str]]:
-    """Use TensorFlow Lite to detect vehicles in the polygon region.
+    """Use OpenCV DNN to detect vehicles in the polygon region.
 
     Runs detection on full image and checks if any vehicle overlaps with the parking space.
-    Uses EfficientDet-Lite0 model (~4MB, ~50MB memory) for low-memory environments.
+    Uses MobileNet-SSD model (~23MB) via OpenCV DNN - much lighter than TFLite.
 
     Returns:
         Tuple of (vehicle_detected, confidence, vehicle_type)
     """
-    interpreter = _load_tf_model()
-    if interpreter is None:
+    net = _load_dnn_model()
+    if net is None:
         if debug_info is not None:
             debug_info['tf_status'] = 'model_not_loaded'
         return False, 0.0, None
@@ -672,45 +664,33 @@ def detect_vehicles_tf(image: np.ndarray, polygon: List[List[float]], debug_info
         if debug_info is not None:
             debug_info['tf_space_box'] = [float(b) for b in space_box]
 
-        # Get input/output details
-        input_details = interpreter.get_input_details()
-        output_details = interpreter.get_output_details()
+        # Prepare image for OpenCV DNN (MobileNet-SSD expects 300x300)
+        blob = cv2.dnn.blobFromImage(image, 0.007843, (300, 300), 127.5)
+        net.setInput(blob)
+        detections = net.forward()
 
-        # Get expected input size
-        input_shape = input_details[0]['shape']
-        input_height, input_width = input_shape[1], input_shape[2]
+        # Parse detections - shape is [1, 1, N, 7]
+        # Each detection: [batch_id, class_id, confidence, x1, y1, x2, y2]
+        boxes = []
+        classes = []
+        scores = []
 
-        # Prepare image for TFLite (resize to model input size)
-        rgb = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
-        resized = cv2.resize(rgb, (input_width, input_height))
-        input_data = np.expand_dims(resized, axis=0).astype(np.uint8)
+        for i in range(detections.shape[2]):
+            confidence = detections[0, 0, i, 2]
+            if confidence > 0.15:  # Low threshold, filter later
+                class_id = int(detections[0, 0, i, 1])
+                x1 = detections[0, 0, i, 3]
+                y1 = detections[0, 0, i, 4]
+                x2 = detections[0, 0, i, 5]
+                y2 = detections[0, 0, i, 6]
+                # Convert to [ymin, xmin, ymax, xmax] format
+                boxes.append([y1, x1, y2, x2])
+                classes.append(class_id)
+                scores.append(float(confidence))
 
-        # Run inference
-        interpreter.set_tensor(input_details[0]['index'], input_data)
-        interpreter.invoke()
-
-        # Get results - SSD MobileNet outputs (different order than EfficientDet)
-        # The output tensor order varies by model, detect by shape
-        outputs = {}
-        for detail in output_details:
-            tensor = interpreter.get_tensor(detail['index'])
-            shape = tensor.shape
-            if len(shape) == 3 and shape[2] == 4:  # boxes: [1, N, 4]
-                outputs['boxes'] = tensor[0]
-            elif len(shape) == 2 and tensor.dtype in [np.float32, np.uint8]:  # classes or scores: [1, N]
-                if 'classes' not in outputs:
-                    outputs['classes'] = tensor[0]
-                else:
-                    outputs['scores'] = tensor[0]
-            elif len(shape) == 1:  # num_detections: [1]
-                outputs['num'] = int(tensor[0])
-
-        boxes = outputs.get('boxes', np.array([]))
-        classes = outputs.get('classes', np.array([])).astype(int)
-        scores = outputs.get('scores', np.array([]))
-
-        # COCO classes for vehicles (1-indexed in COCO)
-        vehicle_classes = {3: 'car', 4: 'motorcycle', 6: 'bus', 8: 'truck'}
+        boxes = np.array(boxes) if boxes else np.array([])
+        classes = np.array(classes) if classes else np.array([])
+        scores = np.array(scores) if scores else np.array([])
 
         best_score = 0.0
         best_type = None
@@ -741,8 +721,8 @@ def detect_vehicles_tf(image: np.ndarray, polygon: List[List[float]], debug_info
 
         for i, (cls, score, box) in enumerate(zip(classes, scores, boxes)):
             if score > 0.15:  # Lower threshold
-                class_name = vehicle_classes.get(cls, f'class_{cls}')
-                is_vehicle = cls in vehicle_classes
+                class_name = VEHICLE_CLASSES.get(cls, f'class_{cls}')
+                is_vehicle = cls in VEHICLE_CLASSES
 
                 # Box is already normalized [ymin, xmin, ymax, xmax]
                 # Check if this detection overlaps with parking space
@@ -800,7 +780,7 @@ def detect_vehicles_tf(image: np.ndarray, polygon: List[List[float]], debug_info
         return detected, best_score, best_type
 
     except Exception as e:
-        logger.error(f"TFLite detection error: {e}")
+        logger.error(f"DNN detection error: {e}")
         if debug_info is not None:
             debug_info['tf_status'] = f'error: {str(e)}'
         return False, 0.0, None
@@ -980,65 +960,42 @@ def detect_all_spaces(
         if aligned:
             logger.info(f"Image aligned successfully")
 
-    # Run TensorFlow Lite detection on full image once to get all vehicle boxes
+    # Run OpenCV DNN detection on full image once to get all vehicle boxes
     all_vehicle_boxes = []
     try:
-        interpreter = _load_tf_model()
-        if interpreter is not None:
+        net = _load_dnn_model()
+        if net is not None:
             h, w = aligned_image.shape[:2]
 
-            # Get input/output details
-            input_details = interpreter.get_input_details()
-            output_details = interpreter.get_output_details()
+            # Prepare image for OpenCV DNN (MobileNet-SSD expects 300x300)
+            blob = cv2.dnn.blobFromImage(aligned_image, 0.007843, (300, 300), 127.5)
+            net.setInput(blob)
+            detections = net.forward()
 
-            # Get expected input size
-            input_shape = input_details[0]['shape']
-            input_height, input_width = input_shape[1], input_shape[2]
+            # Parse detections
+            for i in range(detections.shape[2]):
+                confidence = detections[0, 0, i, 2]
+                class_id = int(detections[0, 0, i, 1])
 
-            # Prepare image for TFLite
-            rgb = cv2.cvtColor(aligned_image, cv2.COLOR_BGR2RGB)
-            resized = cv2.resize(rgb, (input_width, input_height))
-            input_data = np.expand_dims(resized, axis=0).astype(np.uint8)
-
-            # Run inference
-            interpreter.set_tensor(input_details[0]['index'], input_data)
-            interpreter.invoke()
-
-            # Get results - detect by shape (model output order varies)
-            outputs = {}
-            for detail in output_details:
-                tensor = interpreter.get_tensor(detail['index'])
-                shape = tensor.shape
-                if len(shape) == 3 and shape[2] == 4:
-                    outputs['boxes'] = tensor[0]
-                elif len(shape) == 2 and tensor.dtype in [np.float32, np.uint8]:
-                    if 'classes' not in outputs:
-                        outputs['classes'] = tensor[0]
-                    else:
-                        outputs['scores'] = tensor[0]
-
-            boxes = outputs.get('boxes', np.array([]))
-            classes = outputs.get('classes', np.array([])).astype(int)
-            scores = outputs.get('scores', np.array([]))
-
-            vehicle_classes = {3: 'car', 4: 'motorcycle', 6: 'bus', 8: 'truck'}
-
-            for cls, score, box in zip(classes, scores, boxes):
                 # Higher threshold (0.4) to reduce false positives
-                if cls in vehicle_classes and score > 0.4:
-                    ymin, xmin, ymax, xmax = box
+                if class_id in VEHICLE_CLASSES and confidence > 0.4:
+                    x1 = detections[0, 0, i, 3]
+                    y1 = detections[0, 0, i, 4]
+                    x2 = detections[0, 0, i, 5]
+                    y2 = detections[0, 0, i, 6]
+
                     all_vehicle_boxes.append({
-                        'type': vehicle_classes[cls],
-                        'score': float(score),
-                        'box': [float(ymin), float(xmin), float(ymax), float(xmax)],
+                        'type': VEHICLE_CLASSES[class_id],
+                        'score': float(confidence),
+                        'box': [float(y1), float(x1), float(y2), float(x2)],
                         'box_pixels': [
-                            int(xmin * w), int(ymin * h),
-                            int(xmax * w), int(ymax * h)
+                            int(x1 * w), int(y1 * h),
+                            int(x2 * w), int(y2 * h)
                         ]
                     })
             global_info['vehicle_boxes'] = all_vehicle_boxes
     except Exception as e:
-        logger.error(f"Global TFLite detection failed: {e}")
+        logger.error(f"Global DNN detection failed: {e}")
 
     for space in spaces:
         result = detect_space(aligned_image, space, pixel_threshold, tf_confidence)

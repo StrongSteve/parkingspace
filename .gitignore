@@ -28,3 +28,9 @@ Thumbs.db
 .pytest_cache/
 .coverage
 htmlcov/
+
+# ML Models (downloaded at runtime)
+*.tflite
+*.caffemodel
+*.prototxt
+calibration.json

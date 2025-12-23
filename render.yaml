@@ -13,6 +13,6 @@ services:
       - key: TF_CONFIDENCE
         value: 0.5
       - key: TF_ENABLED
-        value: "false"  # Disabled on free tier due to 512MB RAM limit
+        value: "true"  # OpenCV DNN uses ~30MB RAM (much lighter than TFLite)
       - key: TF_PRELOAD
         value: "false"
