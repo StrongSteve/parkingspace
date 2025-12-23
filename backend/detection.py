@@ -869,9 +869,9 @@ def _analyze_detections_for_space(boxes, classes, scores, vehicle_classes, polyg
     poly_xs = [p[0] for p in polygon]
     poly_ys = [p[1] for p in polygon]
     space_box = [min(poly_ys), min(poly_xs), max(poly_ys), max(poly_xs)]  # [ymin, xmin, ymax, xmax]
-    space_area = (space_box[2] - space_box[0]) * (space_box[3] - space_box[1])
 
     min_confidence = 0.15  # Lower threshold to catch more detections
+    min_overlap = 0.1  # Minimum overlap with parking space
 
     best_score = 0.0
     best_type = None
@@ -890,14 +890,6 @@ def _analyze_detections_for_space(boxes, classes, scores, vehicle_classes, polyg
             # Box is already normalized [ymin, xmin, ymax, xmax]
             overlap = box_overlap_ratio(space_box, box)
 
-            # For giant boxes, require higher overlap ratio with the space
-            # A real car in the space should have high overlap, not just cover everything
-            min_overlap_required = 0.1
-            if box_area > 0.25:  # Giant box (>25% of image)
-                # For giant boxes, require much higher overlap to consider it valid
-                # This helps filter false positives while keeping true detections
-                min_overlap_required = 0.5
-
             detection_info = {
                 'class': class_name,
                 'score': float(score),
@@ -908,11 +900,11 @@ def _analyze_detections_for_space(boxes, classes, scores, vehicle_classes, polyg
 
             if is_vehicle:
                 all_detections.append(detection_info)
-                if overlap > min_overlap_required:
+                if overlap > min_overlap:
                     vehicles_in_space.append(detection_info)
 
             # Track best vehicle that overlaps with space
-            if is_vehicle and overlap > min_overlap_required and score > best_score:
+            if is_vehicle and overlap > min_overlap and score > best_score:
                 best_score = float(score)
                 best_type = class_name
                 best_overlap = overlap
@@ -1362,29 +1354,13 @@ def detect_all_spaces(
     # Run BOTH ML backends on full image to get all vehicle boxes for visualization
     all_vehicle_boxes = []
     h, w = aligned_image.shape[:2]
-    min_confidence = 0.35  # Higher threshold to reduce false positives
-    max_box_area_ratio = 0.25  # Reject boxes covering more than 25% of image (false positives)
-
-    def is_valid_detection(box, score):
-        """Filter out invalid detections (too large, too small, low confidence)."""
-        if score < min_confidence:
-            return False
-        ymin, xmin, ymax, xmax = box
-        box_area = (ymax - ymin) * (xmax - xmin)
-        # Reject giant boxes (false positives from aerial view confusion)
-        if box_area > max_box_area_ratio:
-            logger.debug(f"Rejected detection: box area {box_area:.2%} > max {max_box_area_ratio:.0%}")
-            return False
-        # Reject tiny boxes (noise)
-        if box_area < 0.001:  # Less than 0.1% of image
-            return False
-        return True
+    min_confidence = 0.20  # Show detections with 20%+ confidence
 
     try:
         # Run TFLite detection
         tflite_boxes, tflite_classes, tflite_scores = _detect_with_tflite(aligned_image)
         for box, cls, score in zip(tflite_boxes, tflite_classes, tflite_scores):
-            if int(cls) in COCO_VEHICLE_CLASSES and is_valid_detection(box, score):
+            if int(cls) in COCO_VEHICLE_CLASSES and score > min_confidence:
                 ymin, xmin, ymax, xmax = box
                 all_vehicle_boxes.append({
                     'type': COCO_VEHICLE_CLASSES[int(cls)],
@@ -1400,7 +1376,7 @@ def detect_all_spaces(
         # Run OpenCV DNN detection
         dnn_boxes, dnn_classes, dnn_scores = _detect_with_opencv_dnn(aligned_image)
         for box, cls, score in zip(dnn_boxes, dnn_classes, dnn_scores):
-            if int(cls) in VOC_VEHICLE_CLASSES and is_valid_detection(box, score):
+            if int(cls) in VOC_VEHICLE_CLASSES and score > min_confidence:
                 ymin, xmin, ymax, xmax = box
                 all_vehicle_boxes.append({
                     'type': VOC_VEHICLE_CLASSES[int(cls)],
