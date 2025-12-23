@@ -5,11 +5,8 @@ Pillow==10.2.0
 numpy==1.26.3
 opencv-python-headless==4.9.0.80
 psutil==5.9.8
+tflite-runtime==2.14.0
 
-# Detection backends (at least one required):
-# Default: OpenCV DNN (MobileNet-SSD ~23MB, uses ~30MB RAM)
-# Alternative: TFLite (SSD MobileNet V1 ~4MB, uses ~20MB RAM)
-
-# To use TFLite backend, uncomment one of these and set DNN_BACKEND=tflite:
-# tflite-runtime==2.14.0  # Lightweight, Linux/macOS only (~2MB)
-# tensorflow==2.14.0      # Full TensorFlow if tflite-runtime unavailable
+# Detection backends (both run in parallel for comparison):
+# - OpenCV DNN (MobileNet-SSD ~23MB model, uses ~30MB RAM)
+# - TFLite (SSD MobileNet V1 ~4MB model, uses ~20MB RAM)

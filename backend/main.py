@@ -420,7 +420,7 @@ async def get_stats(authorization: Optional[str] = Header(None)):
 
     import psutil
     import platform
-    from detection import _dnn_net, _dnn_enabled, _dnn_backend, _tflite_interpreter, _tflite_available, get_model_status
+    from detection import _dnn_net, _dnn_enabled, _tflite_interpreter, _tflite_available, get_model_status
 
     # Get process memory info
     process = psutil.Process()
@@ -428,14 +428,6 @@ async def get_stats(authorization: Optional[str] = Header(None)):
 
     # Get system memory info
     system_memory = psutil.virtual_memory()
-
-    # Determine ML model status
-    if _dnn_backend == 'tflite':
-        model_name = "TFLite SSD MobileNet V1"
-        model_loaded = _tflite_interpreter is not None and _tflite_interpreter is not False
-    else:
-        model_name = "OpenCV DNN MobileNet-SSD"
-        model_loaded = _dnn_net is not None and _dnn_net is not False
 
     # Get detailed model status for debugging
     model_status = get_model_status()
@@ -452,10 +444,30 @@ async def get_stats(authorization: Optional[str] = Header(None)):
             "system_available_mb": round(system_memory.available / 1024 / 1024, 1),
             "system_percent_used": system_memory.percent
         },
+        "ml_models": {
+            "mode": "dual",  # Both backends run in parallel
+            "opencv_dnn": {
+                "name": "OpenCV DNN MobileNet-SSD",
+                "loaded": _dnn_net is not None and _dnn_net is not False,
+                "enabled": _dnn_enabled,
+                "prototxt_exists": model_status.get('opencv_dnn', {}).get('prototxt_exists'),
+                "caffemodel_exists": model_status.get('opencv_dnn', {}).get('caffemodel_exists'),
+                "caffemodel_size_mb": model_status.get('opencv_dnn', {}).get('caffemodel_size_mb'),
+                "download_error": model_status.get('opencv_dnn', {}).get('download_error')
+            },
+            "tflite": {
+                "name": "TFLite SSD MobileNet V1",
+                "loaded": _tflite_interpreter is not None and _tflite_interpreter is not False,
+                "available": _tflite_available,
+                "model_exists": model_status.get('tflite', {}).get('model_exists'),
+                "model_size_mb": model_status.get('tflite', {}).get('model_size_mb')
+            }
+        },
+        # Legacy field for backwards compatibility
         "ml_model": {
-            "backend": _dnn_backend,
-            "name": model_name,
-            "loaded": model_loaded,
+            "backend": "dual",
+            "name": "OpenCV DNN + TFLite (comparison mode)",
+            "loaded": (_dnn_net is not None and _dnn_net is not False) or (_tflite_interpreter is not None and _tflite_interpreter is not False),
             "enabled": _dnn_enabled,
             "prototxt_exists": model_status.get('prototxt_exists'),
             "caffemodel_exists": model_status.get('caffemodel_exists'),

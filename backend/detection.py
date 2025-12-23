@@ -147,17 +147,38 @@ def get_model_status() -> dict:
     """Get current model status for debugging."""
     import os
     model_dir = os.path.dirname(os.path.abspath(__file__))
+
+    # OpenCV DNN model files
     prototxt_path = os.path.join(model_dir, 'MobileNetSSD_deploy.prototxt')
     caffemodel_path = os.path.join(model_dir, 'MobileNetSSD_deploy.caffemodel')
 
+    # TFLite model file
+    tflite_path = os.path.join(model_dir, 'ssd_mobilenet_v1.tflite')
+
     return {
+        # OpenCV DNN status
+        'opencv_dnn': {
+            'prototxt_exists': os.path.exists(prototxt_path),
+            'caffemodel_exists': os.path.exists(caffemodel_path),
+            'caffemodel_size_mb': round(os.path.getsize(caffemodel_path) / 1024 / 1024, 1) if os.path.exists(caffemodel_path) else 0,
+            'model_loaded': _dnn_net is not None and _dnn_net is not False,
+            'download_error': _model_download_error
+        },
+        # TFLite status
+        'tflite': {
+            'model_exists': os.path.exists(tflite_path),
+            'model_size_mb': round(os.path.getsize(tflite_path) / 1024 / 1024, 1) if os.path.exists(tflite_path) else 0,
+            'interpreter_loaded': _tflite_interpreter is not None and _tflite_interpreter is not False,
+            'available': _tflite_available
+        },
+        # Legacy fields for backwards compatibility
         'prototxt_exists': os.path.exists(prototxt_path),
         'caffemodel_exists': os.path.exists(caffemodel_path),
         'caffemodel_size_mb': round(os.path.getsize(caffemodel_path) / 1024 / 1024, 1) if os.path.exists(caffemodel_path) else 0,
         'download_error': _model_download_error,
         'dnn_net_loaded': _dnn_net is not None and _dnn_net is not False,
         'dnn_enabled': _dnn_enabled,
-        'backend': _dnn_backend
+        'backend': 'dual'  # Now running both
     }
 
 
@@ -312,6 +333,50 @@ def _detect_with_tflite(image: np.ndarray) -> Tuple[List, List, List]:
         return boxes, classes, scores
     except Exception as e:
         logger.error(f"TFLite detection error: {e}")
+        return [], [], []
+
+
+def _detect_with_opencv_dnn(image: np.ndarray) -> Tuple[List, List, List]:
+    """Run detection using OpenCV DNN model.
+
+    Returns: (boxes, classes, scores) - all as numpy arrays
+    """
+    net = _load_dnn_model()
+    if net is None:
+        return [], [], []
+
+    try:
+        # OpenCV DNN detection
+        blob = cv2.dnn.blobFromImage(image, 0.007843, (300, 300), 127.5)
+        net.setInput(blob)
+        detections = net.forward()
+
+        # Parse detections - shape is [1, 1, N, 7]
+        # Each detection: [batch_id, class_id, confidence, x1, y1, x2, y2]
+        boxes = []
+        classes = []
+        scores = []
+
+        for i in range(detections.shape[2]):
+            confidence = detections[0, 0, i, 2]
+            if confidence > 0.15:  # Low threshold, filter later
+                class_id = int(detections[0, 0, i, 1])
+                x1 = detections[0, 0, i, 3]
+                y1 = detections[0, 0, i, 4]
+                x2 = detections[0, 0, i, 5]
+                y2 = detections[0, 0, i, 6]
+                # Convert to [ymin, xmin, ymax, xmax] format
+                boxes.append([y1, x1, y2, x2])
+                classes.append(class_id)
+                scores.append(float(confidence))
+
+        boxes = np.array(boxes) if boxes else np.array([])
+        classes = np.array(classes) if classes else np.array([])
+        scores = np.array(scores) if scores else np.array([])
+
+        return boxes, classes, scores
+    except Exception as e:
+        logger.error(f"OpenCV DNN detection error: {e}")
         return [], [], []
 
 
@@ -795,14 +860,169 @@ def box_overlap_ratio(box1, box2):
     return inter_area / box1_area
 
 
-def detect_vehicles_tf(image: np.ndarray, polygon: List[List[float]], debug_info: dict = None) -> Tuple[bool, float, Optional[str]]:
-    """Use ML backend (OpenCV DNN or TFLite) to detect vehicles in the polygon region.
+def _analyze_detections_for_space(boxes, classes, scores, vehicle_classes, polygon, image_shape):
+    """Analyze detection results for a parking space.
 
-    Runs detection on full image and checks if any vehicle overlaps with the parking space.
-    Backend is selected via DNN_BACKEND env var: 'dnn' (default) or 'tflite'.
+    Returns dict with detection analysis.
+    """
+    h, w = image_shape[:2]
+
+    # Convert polygon to normalized bounding box
+    poly_xs = [p[0] for p in polygon]
+    poly_ys = [p[1] for p in polygon]
+    space_box = [min(poly_ys), min(poly_xs), max(poly_ys), max(poly_xs)]  # [ymin, xmin, ymax, xmax]
+
+    best_score = 0.0
+    best_type = None
+    best_overlap = 0.0
+    all_detections = []
+    vehicles_in_space = []
+
+    for i, (cls, score, box) in enumerate(zip(classes, scores, boxes)):
+        if score > 0.15:  # Lower threshold
+            class_name = vehicle_classes.get(int(cls), f'class_{int(cls)}')
+            is_vehicle = int(cls) in vehicle_classes
+
+            # Box is already normalized [ymin, xmin, ymax, xmax]
+            overlap = box_overlap_ratio(space_box, box)
+
+            detection_info = {
+                'class': class_name,
+                'score': float(score),
+                'box': [float(b) for b in box],
+                'overlap': float(overlap)
+            }
+
+            if is_vehicle:
+                all_detections.append(detection_info)
+                if overlap > 0.1:
+                    vehicles_in_space.append(detection_info)
+
+            # Track best vehicle that overlaps with space
+            if is_vehicle and overlap > 0.1 and score > best_score:
+                best_score = float(score)
+                best_type = class_name
+                best_overlap = overlap
+
+    detected = best_score > 0.2 and best_overlap > 0.1
+
+    return {
+        'detected': detected,
+        'confidence': best_score,
+        'vehicle_type': best_type,
+        'overlap': best_overlap,
+        'all_detections': all_detections[:10],
+        'vehicles_in_space': vehicles_in_space
+    }
+
+
+def detect_vehicles_tf(image: np.ndarray, polygon: List[List[float]], debug_info: dict = None) -> Tuple[bool, float, Optional[str]]:
+    """Run BOTH OpenCV DNN and TFLite detection for comparison.
+
+    Runs both backends on the full image and checks if any vehicle overlaps with the parking space.
+    Both results are stored in debug_info for comparison.
+
+    Primary result comes from OpenCV DNN, TFLite is used for comparison.
 
     Returns:
         Tuple of (vehicle_detected, confidence, vehicle_type)
+    """
+    import time
+
+    h, w = image.shape[:2]
+
+    # Convert polygon to normalized bounding box for debug visualization
+    poly_xs = [p[0] for p in polygon]
+    poly_ys = [p[1] for p in polygon]
+    space_box = [min(poly_ys), min(poly_xs), max(poly_ys), max(poly_xs)]
+
+    if debug_info is not None:
+        debug_info['dnn_space_box'] = [float(b) for b in space_box]
+
+    # Run OpenCV DNN detection
+    opencv_start = time.time()
+    opencv_boxes, opencv_classes, opencv_scores = _detect_with_opencv_dnn(image)
+    opencv_time = (time.time() - opencv_start) * 1000  # ms
+
+    opencv_result = None
+    if len(opencv_boxes) > 0 or _dnn_net is not None:
+        opencv_result = _analyze_detections_for_space(
+            opencv_boxes, opencv_classes, opencv_scores,
+            VOC_VEHICLE_CLASSES, polygon, image.shape
+        )
+        opencv_result['status'] = 'success'
+        opencv_result['time_ms'] = round(opencv_time, 1)
+    else:
+        opencv_result = {
+            'status': 'model_not_loaded' if _dnn_net is None else 'no_detections',
+            'detected': False,
+            'confidence': 0.0,
+            'vehicle_type': None,
+            'time_ms': round(opencv_time, 1),
+            'all_detections': [],
+            'vehicles_in_space': []
+        }
+
+    # Run TFLite detection
+    tflite_start = time.time()
+    tflite_boxes, tflite_classes, tflite_scores = _detect_with_tflite(image)
+    tflite_time = (time.time() - tflite_start) * 1000  # ms
+
+    tflite_result = None
+    if len(tflite_boxes) > 0 or _tflite_interpreter is not None:
+        tflite_result = _analyze_detections_for_space(
+            tflite_boxes, tflite_classes, tflite_scores,
+            COCO_VEHICLE_CLASSES, polygon, image.shape
+        )
+        tflite_result['status'] = 'success'
+        tflite_result['time_ms'] = round(tflite_time, 1)
+    else:
+        tflite_result = {
+            'status': 'model_not_loaded' if _tflite_interpreter is None else 'no_detections',
+            'detected': False,
+            'confidence': 0.0,
+            'vehicle_type': None,
+            'time_ms': round(tflite_time, 1),
+            'all_detections': [],
+            'vehicles_in_space': []
+        }
+
+    # Store both results in debug_info
+    if debug_info is not None:
+        debug_info['opencv_dnn'] = opencv_result
+        debug_info['tflite'] = tflite_result
+        debug_info['backend_comparison'] = {
+            'opencv_detected': opencv_result.get('detected', False),
+            'tflite_detected': tflite_result.get('detected', False),
+            'opencv_confidence': opencv_result.get('confidence', 0.0),
+            'tflite_confidence': tflite_result.get('confidence', 0.0),
+            'opencv_time_ms': opencv_result.get('time_ms', 0),
+            'tflite_time_ms': tflite_result.get('time_ms', 0),
+            'agreement': opencv_result.get('detected', False) == tflite_result.get('detected', False)
+        }
+
+        # Keep legacy fields for compatibility
+        debug_info['dnn_status'] = opencv_result.get('status', 'unknown')
+        debug_info['dnn_detections'] = opencv_result.get('all_detections', [])
+        debug_info['dnn_vehicles_in_space'] = opencv_result.get('vehicles_in_space', [])
+        debug_info['dnn_best_vehicle'] = {
+            'type': opencv_result.get('vehicle_type'),
+            'score': opencv_result.get('confidence', 0.0),
+            'overlap': opencv_result.get('overlap', 0.0)
+        }
+        debug_info['backend'] = 'dual'
+
+    # Primary result from OpenCV DNN (or TFLite if DNN not available)
+    if opencv_result.get('status') == 'success':
+        return opencv_result.get('detected', False), opencv_result.get('confidence', 0.0), opencv_result.get('vehicle_type')
+    elif tflite_result.get('status') == 'success':
+        return tflite_result.get('detected', False), tflite_result.get('confidence', 0.0), tflite_result.get('vehicle_type')
+    else:
+        return False, 0.0, None
+
+
+def detect_vehicles_tf_OLD(image: np.ndarray, polygon: List[List[float]], debug_info: dict = None) -> Tuple[bool, float, Optional[str]]:
+    """DEPRECATED: Old single-backend detection. Kept for reference.
     """
     # Choose backend based on configuration
     if _dnn_backend == 'tflite':

@@ -1067,53 +1067,96 @@
           </div>`;
         }
 
-        // DNN Detection
-        html += `<div class="debug-subsection">
-          <div class="debug-subsection-title">DNN Detection</div>`;
-        if (debug.dnn_status === 'success') {
-          html += `<div class="debug-row">
-            <span class="debug-label">DNN Status:</span>
-            <span class="debug-value success">Loaded & Running</span>
+        // Backend Comparison (dual mode)
+        if (debug.backend_comparison) {
+          const comp = debug.backend_comparison;
+          html += `<div class="debug-subsection">
+            <div class="debug-subsection-title">ML Backend Comparison</div>
+            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; margin-top: 0.5rem;">
+              <!-- OpenCV DNN Column -->
+              <div style="background: rgba(59, 130, 246, 0.1); padding: 0.75rem; border-radius: 6px; border: 1px solid rgba(59, 130, 246, 0.3);">
+                <div style="font-weight: 600; color: #3b82f6; margin-bottom: 0.5rem;">OpenCV DNN</div>
+                <div class="debug-row">
+                  <span class="debug-label">Status:</span>
+                  <span class="debug-value ${debug.opencv_dnn?.status === 'success' ? 'success' : 'error'}">${debug.opencv_dnn?.status || 'not loaded'}</span>
+                </div>
+                <div class="debug-row">
+                  <span class="debug-label">Detected:</span>
+                  <span class="debug-value ${comp.opencv_detected ? 'error' : 'success'}">${comp.opencv_detected ? 'VEHICLE' : 'Empty'}</span>
+                </div>
+                <div class="debug-row">
+                  <span class="debug-label">Confidence:</span>
+                  <span class="debug-value">${(comp.opencv_confidence * 100).toFixed(1)}%</span>
+                </div>
+                <div class="debug-row">
+                  <span class="debug-label">Time:</span>
+                  <span class="debug-value">${comp.opencv_time_ms}ms</span>
+                </div>
+                ${debug.opencv_dnn?.all_detections?.length ? `<div class="debug-row">
+                  <span class="debug-label">Detections:</span>
+                  <span class="debug-value" style="font-size: 0.7rem;">${debug.opencv_dnn.all_detections.map(d => `${d.class}:${(d.score*100).toFixed(0)}%`).join(', ')}</span>
+                </div>` : ''}
+              </div>
+              <!-- TFLite Column -->
+              <div style="background: rgba(16, 185, 129, 0.1); padding: 0.75rem; border-radius: 6px; border: 1px solid rgba(16, 185, 129, 0.3);">
+                <div style="font-weight: 600; color: #10b981; margin-bottom: 0.5rem;">TFLite</div>
+                <div class="debug-row">
+                  <span class="debug-label">Status:</span>
+                  <span class="debug-value ${debug.tflite?.status === 'success' ? 'success' : 'error'}">${debug.tflite?.status || 'not loaded'}</span>
+                </div>
+                <div class="debug-row">
+                  <span class="debug-label">Detected:</span>
+                  <span class="debug-value ${comp.tflite_detected ? 'error' : 'success'}">${comp.tflite_detected ? 'VEHICLE' : 'Empty'}</span>
+                </div>
+                <div class="debug-row">
+                  <span class="debug-label">Confidence:</span>
+                  <span class="debug-value">${(comp.tflite_confidence * 100).toFixed(1)}%</span>
+                </div>
+                <div class="debug-row">
+                  <span class="debug-label">Time:</span>
+                  <span class="debug-value">${comp.tflite_time_ms}ms</span>
+                </div>
+                ${debug.tflite?.all_detections?.length ? `<div class="debug-row">
+                  <span class="debug-label">Detections:</span>
+                  <span class="debug-value" style="font-size: 0.7rem;">${debug.tflite.all_detections.map(d => `${d.class}:${(d.score*100).toFixed(0)}%`).join(', ')}</span>
+                </div>` : ''}
+              </div>
+            </div>
+            <div class="debug-row" style="margin-top: 0.75rem; padding: 0.5rem; background: ${comp.agreement ? 'rgba(34, 197, 94, 0.1)' : 'rgba(239, 68, 68, 0.1)'}; border-radius: 4px;">
+              <span class="debug-label">Agreement:</span>
+              <span class="debug-value ${comp.agreement ? 'success' : 'error'}">${comp.agreement ? 'YES - Both agree' : 'NO - Results differ!'}</span>
+            </div>
           </div>`;
-          if (debug.dnn_crop_size) {
-            html += `<div class="debug-row">
-              <span class="debug-label">DNN Crop Size:</span>
-              <span class="debug-value">${debug.dnn_crop_size}</span>
-            </div>`;
-          }
-          if (debug.dnn_best_vehicle) {
-            const dnnResult = debug.dnn_best_vehicle;
-            html += `<div class="debug-row">
-              <span class="debug-label">Best Vehicle Detection:</span>
-              <span class="debug-value">${dnnResult.type || 'none'} (${(dnnResult.score * 100).toFixed(1)}%)</span>
-            </div>`;
-          }
-          if (debug.dnn_detections && debug.dnn_detections.length > 0) {
-            html += `<div class="debug-row">
-              <span class="debug-label">All Detections:</span>
-              <span class="debug-value">${debug.dnn_detections.map(d => `${d.class}: ${(d.score * 100).toFixed(0)}%`).join(', ')}</span>
-            </div>`;
-          }
-          if (debug.dnn_method_result) {
-            html += `<div class="debug-row">
-              <span class="debug-label">DNN Method Result:</span>
-              <span class="debug-value ${debug.dnn_method_result === 'occupied' ? 'error' : 'success'}">${debug.dnn_method_result}</span>
-            </div>`;
-          }
-          // Show DNN debug image with detections
-          if (debug.dnn_debug_image) {
-            html += `<div class="debug-row" style="flex-direction: column; align-items: flex-start;">
-              <span class="debug-label" style="margin-bottom: 0.5rem;">DNN Detection Visual:</span>
-              <img src="${debug.dnn_debug_image}" alt="DNN Detections" style="max-width: 100%; border-radius: 4px; border: 1px solid var(--color-border);">
-            </div>`;
-          }
         } else {
-          html += `<div class="debug-row">
-            <span class="debug-label">DNN Status:</span>
-            <span class="debug-value error">${debug.dnn_status || 'not available'}</span>
-          </div>`;
+          // Legacy single-backend display
+          html += `<div class="debug-subsection">
+            <div class="debug-subsection-title">DNN Detection</div>`;
+          if (debug.dnn_status === 'success') {
+            html += `<div class="debug-row">
+              <span class="debug-label">DNN Status:</span>
+              <span class="debug-value success">Loaded & Running</span>
+            </div>`;
+            if (debug.dnn_best_vehicle) {
+              const dnnResult = debug.dnn_best_vehicle;
+              html += `<div class="debug-row">
+                <span class="debug-label">Best Vehicle Detection:</span>
+                <span class="debug-value">${dnnResult.type || 'none'} (${(dnnResult.score * 100).toFixed(1)}%)</span>
+              </div>`;
+            }
+            if (debug.dnn_method_result) {
+              html += `<div class="debug-row">
+                <span class="debug-label">DNN Method Result:</span>
+                <span class="debug-value ${debug.dnn_method_result === 'occupied' ? 'error' : 'success'}">${debug.dnn_method_result}</span>
+              </div>`;
+            }
+          } else {
+            html += `<div class="debug-row">
+              <span class="debug-label">DNN Status:</span>
+              <span class="debug-value error">${debug.dnn_status || 'not available'}</span>
+            </div>`;
+          }
+          html += `</div>`;
         }
-        html += `</div>`;
 
         // Raw JSON option
         html += `<div class="debug-subsection">
@@ -1271,44 +1314,37 @@
             </div>
           </div>
 
-          <!-- ML Model Section -->
+          <!-- ML Models Section (Dual Backend) -->
           <div style="background: var(--color-surface-light); padding: 1rem; border-radius: var(--radius);">
-            <h4 style="margin: 0 0 0.75rem 0; font-size: 0.875rem; color: var(--color-primary);">ML Detection</h4>
-            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 0.5rem;">
-              <div>
-                <div style="font-size: 0.75rem; color: var(--color-text-muted);">Backend</div>
-                <div style="font-size: 1rem; font-weight: 600; text-transform: uppercase;">${stats.ml_model.backend}</div>
+            <h4 style="margin: 0 0 0.75rem 0; font-size: 0.875rem; color: var(--color-primary);">ML Detection (Dual Backend)</h4>
+            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 0.75rem;">
+              <!-- OpenCV DNN -->
+              <div style="background: rgba(59, 130, 246, 0.1); padding: 0.75rem; border-radius: 6px; border: 1px solid rgba(59, 130, 246, 0.2);">
+                <div style="font-weight: 600; color: #3b82f6; font-size: 0.8rem; margin-bottom: 0.5rem;">OpenCV DNN</div>
+                <div style="display: flex; align-items: center; gap: 0.25rem; margin-bottom: 0.25rem;">
+                  <span style="width: 8px; height: 8px; border-radius: 50%; background: ${stats.ml_models?.opencv_dnn?.loaded ? '#22c55e' : '#ef4444'};"></span>
+                  <span style="font-size: 0.75rem;">${stats.ml_models?.opencv_dnn?.loaded ? 'Loaded' : 'Not loaded'}</span>
+                </div>
+                <div style="font-size: 0.7rem; color: var(--color-text-muted);">
+                  Model: ${stats.ml_models?.opencv_dnn?.caffemodel_size_mb || 0} MB
+                  ${stats.ml_models?.opencv_dnn?.download_error ? `<br><span style="color: #ef4444;">Error: ${stats.ml_models.opencv_dnn.download_error}</span>` : ''}
+                </div>
               </div>
-              <div>
-                <div style="font-size: 0.75rem; color: var(--color-text-muted);">Status</div>
-                <div style="font-size: 1rem;">
-                  <span style="display: inline-flex; align-items: center; gap: 0.25rem;">
-                    <span style="width: 8px; height: 8px; border-radius: 50%; background: ${stats.ml_model.loaded ? '#22c55e' : stats.ml_model.enabled ? '#f59e0b' : '#ef4444'};"></span>
-                    ${stats.ml_model.loaded ? 'Loaded' : stats.ml_model.enabled ? 'Not loaded yet' : 'Disabled'}
-                  </span>
+              <!-- TFLite -->
+              <div style="background: rgba(16, 185, 129, 0.1); padding: 0.75rem; border-radius: 6px; border: 1px solid rgba(16, 185, 129, 0.2);">
+                <div style="font-weight: 600; color: #10b981; font-size: 0.8rem; margin-bottom: 0.5rem;">TFLite</div>
+                <div style="display: flex; align-items: center; gap: 0.25rem; margin-bottom: 0.25rem;">
+                  <span style="width: 8px; height: 8px; border-radius: 50%; background: ${stats.ml_models?.tflite?.loaded ? '#22c55e' : '#ef4444'};"></span>
+                  <span style="font-size: 0.75rem;">${stats.ml_models?.tflite?.loaded ? 'Loaded' : 'Not loaded'}</span>
+                </div>
+                <div style="font-size: 0.7rem; color: var(--color-text-muted);">
+                  Model: ${stats.ml_models?.tflite?.model_size_mb || 0} MB
                 </div>
               </div>
             </div>
-            <div style="margin-top: 0.5rem; font-size: 0.75rem; color: var(--color-text-muted);">
-              Model: ${stats.ml_model.name}
+            <div style="margin-top: 0.5rem; font-size: 0.7rem; color: var(--color-text-muted); text-align: center;">
+              Both backends run in parallel for comparison
             </div>
-            <div style="margin-top: 0.5rem; display: grid; grid-template-columns: 1fr 1fr; gap: 0.5rem; font-size: 0.75rem;">
-              <div>
-                <span style="color: var(--color-text-muted);">Prototxt:</span>
-                <span style="color: ${stats.ml_model.prototxt_exists ? '#22c55e' : '#ef4444'};">${stats.ml_model.prototxt_exists ? 'OK' : 'Missing'}</span>
-              </div>
-              <div>
-                <span style="color: var(--color-text-muted);">Caffemodel:</span>
-                <span style="color: ${stats.ml_model.caffemodel_exists && stats.ml_model.caffemodel_size_mb > 20 ? '#22c55e' : '#ef4444'};">
-                  ${stats.ml_model.caffemodel_exists ? stats.ml_model.caffemodel_size_mb + ' MB' : 'Missing'}
-                </span>
-              </div>
-            </div>
-            ${stats.ml_model.download_error ? `
-            <div style="margin-top: 0.5rem; padding: 0.5rem; background: rgba(239, 68, 68, 0.1); border-radius: 4px; font-size: 0.75rem; color: #ef4444;">
-              Download Error: ${stats.ml_model.download_error}
-            </div>
-            ` : ''}
           </div>
 
           <!-- Detection Settings -->
